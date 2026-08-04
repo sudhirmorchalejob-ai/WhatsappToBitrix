@@ -25,6 +25,7 @@ function createWebhookController({
         let webhookLog;
         try {
           webhookLog = await webhookLogRepository.create({
+            tenantId: install && install.tenantId ? install.tenantId : null,
             source: WEBHOOK_SOURCE.BITRIX24,
             eventType: `${eventName}:${kind}`,
             payload: canonical.raw,

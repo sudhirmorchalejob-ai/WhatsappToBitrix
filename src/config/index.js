@@ -42,6 +42,8 @@ const envSchema = z.object({
   WHATSBOX_API_KEY: z.string().default(''),
   WHATSBOX_CHANNEL_ID: z.string().default(''),
   WHATSBOX_WEBHOOK_SECRET: z.string().default(''),
+  // Default WhatsApp webhook URL used for a tenant when none is saved.
+  WHATSAPP_WEBHOOK_URL: z.string().default(''),
 
   META_API_BASE_URL: z.string().url().default('https://graph.facebook.com'),
   META_GRAPH_VERSION: z.string().default('v21.0'),

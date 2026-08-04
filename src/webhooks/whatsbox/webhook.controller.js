@@ -4,6 +4,7 @@ const { WEBHOOK_LOG_STATUS } = require('../../constants');
 const { WebhookLogRepository } = require('../../repositories/webhookLog.repository');
 const { normalizeWebhook } = require('./normalizers');
 const { WebhookDispatcher } = require('./dispatcher');
+const { createTenantChannelResolver } = require('../tenantResolver');
 
 const log = logger.childFor('webhook-controller');
 
@@ -18,6 +19,7 @@ const dispatcher = new WebhookDispatcher({
 
 async function handle(req, res) {
   const signature = SIGNATURE_HEADERS.map((h) => req.get(h)).find(Boolean) || null;
+  const resolveTenantId = createTenantChannelResolver();
 
   // req.body is the RAW buffer (express.raw mounted on this route)
   let payload;
@@ -45,9 +47,24 @@ async function handle(req, res) {
   const processed = [];
 
   for (const { kind, canonical } of events) {
+    const tenantId = await resolveTenantId(canonical.channelId);
+    log.info('whatsbox webhook received', {
+      kind,
+      event: canonical.event,
+      channelId: canonical.channelId,
+      from: canonical.from,
+      fromName: canonical.fromName || null,
+      body: canonical.body ? String(canonical.body).slice(0, 200) : null,
+      type: canonical.type || null,
+      status: canonical.status || null,
+      messageId: canonical.messageId,
+      timestamp: canonical.timestamp,
+      tenantId,
+    });
     let webhookLog;
     try {
       webhookLog = await webhookLogRepository.create({
+        tenantId,
         source: 'WHATSBOX',
         eventType: `${kind}_${canonical.type || canonical.status || 'unknown'}`,
         payload: canonical.raw,
@@ -61,7 +78,7 @@ async function handle(req, res) {
     }
 
     try {
-      const result = await dispatcher.dispatch(canonical);
+      const result = await dispatcher.dispatch(canonical, { tenantId, ip: req.ip });
       await webhookLogRepository.markProcessed(webhookLog.id, {
         status: WEBHOOK_LOG_STATUS.PROCESSED,
         processedAt: new Date(),

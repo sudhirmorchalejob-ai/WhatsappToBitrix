@@ -1,13 +1,15 @@
 const { RetryOutgoingMessagesJob } = require('./retryOutgoingMessages.job');
 const { ResyncContactsJob } = require('./resyncContacts.job');
+const { ActivityLogRepository } = require('../repositories');
 
 /**
  * Background worker registry. Jobs share the repository/logger singletons
  * and are started/stopped by the server lifecycle (see src/server.js).
  */
 function createJobs() {
+  const activityLogRepo = new ActivityLogRepository();
   return {
-    retryOutgoing: new RetryOutgoingMessagesJob(),
+    retryOutgoing: new RetryOutgoingMessagesJob({ activityLogRepo }),
     resyncContacts: new ResyncContactsJob(),
   };
 }

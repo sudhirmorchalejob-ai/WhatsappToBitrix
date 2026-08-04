@@ -1,9 +1,5 @@
 // ------------------------------------------------------------------
-// WhatsBox <-> Bitrix24 integration schema (PostgreSQL)
-// Naming: model names singular, tables mapped to plural (see @@map)
-//
-// NOTE: create the database before migrating:
-//   psql -U postgres -c "CREATE DATABASE whatsapp_b24_integration;"
+// WhatsBox <-> Bitrix24 Multi-Tenant integration schema (PostgreSQL)
 // ------------------------------------------------------------------
 
 generator client {
@@ -62,11 +58,105 @@ enum WebhookSource {
   BITRIX24
 }
 
+enum CampaignStatus {
+  DRAFT
+  PROCESSING
+  COMPLETED
+  PARTIAL
+  FAILED
+}
+
+enum CampaignType {
+  TEXT
+  MEDIA
+}
+
+enum UserRole {
+  ADMIN
+  SUPER_ADMIN
+  TENANT_ADMIN
+  USER
+}
+
 // ------------------------------- Models ------------------------------
+
+model Tenant {
+  id                    Int          @id @default(autoincrement())
+  name                  String       @db.VarChar(255)
+  slug                  String       @unique @db.VarChar(100)
+  status                String       @default("ACTIVE") @db.VarChar(20)
+
+  // Integration credentials per tenant
+  whatsappWebhookUrl   String?      @db.VarChar(255)
+  whatsboxChannelId    String?      @db.VarChar(255)
+  whatsboxWebhookSecret String?     @db.VarChar(255)
+
+  bitrix24WebhookUrl    String?      @db.VarChar(500)
+  bitrix24WebhookSecret String?      @db.VarChar(255)
+
+  isConfigured          Boolean      @default(false)
+  lastSyncedAt          DateTime?
+
+  createdAt             DateTime     @default(now())
+  updatedAt             DateTime     @updatedAt
+
+  users                 User[]
+  contacts              Contact[]
+  conversations         Conversation[]
+  messages              Message[]
+  agents                Agent[]
+  settings              Setting[]
+  installs              Install[]
+  webhookLogs           WebhookLog[]
+  templates             Template[]
+  autoReplyLogs         AutoReplyLog[]
+  activityLogs          ActivityLog[]
+  campaigns             Campaign[]
+
+  @@map("tenants")
+}
+
+model User {
+  id           Int        @id @default(autoincrement())
+  tenantId     Int?
+  email        String     @unique @db.VarChar(255)
+  passwordHash String     @db.VarChar(255)
+  name         String     @db.VarChar(255)
+  role         UserRole   @default(ADMIN)
+  isActive     Boolean    @default(true)
+  lastLoginAt  DateTime?
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  tenant       Tenant?    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  activityLogs ActivityLog[]
+
+  @@index([tenantId])
+  @@map("users")
+}
+
+model ActivityLog {
+  id           Int      @id @default(autoincrement())
+  tenantId     Int?
+  userId       Int?
+  action       String   @db.VarChar(100)
+  category     String   @default("SYSTEM") @db.VarChar(50)
+  details      Json?
+  ipAddress    String?  @db.VarChar(50)
+  createdAt    DateTime @default(now())
+
+  tenant       Tenant?  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  user         User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([tenantId, createdAt])
+  @@index([action])
+  @@map("activity_logs")
+}
 
 model Contact {
   id                Int      @id @default(autoincrement())
-  whatsappPhone     String   @unique @db.VarChar(20)
+  tenantId          Int?
+  whatsappPhone     String   @db.VarChar(20)
   firstName         String?  @db.VarChar(255)
   lastName          String?  @db.VarChar(255)
   name              String?  @db.VarChar(255)
@@ -75,34 +165,35 @@ model Contact {
   avatarUrl         String?  @db.VarChar(500)
   isBlocked         Boolean  @default(false)
   lastActivityAt    DateTime?
-  bitrix24ContactId Int?     @unique
+  bitrix24ContactId Int?
   syncStatus        SyncStatus @default(PENDING)
+  createdVia        String     @default("WHATSAPP") @db.VarChar(20)
   meta              Json?
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
 
+  tenant            Tenant?  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   conversations     Conversation[]
   messages          Message[]
   autoReplyLogs     AutoReplyLog[]
 
+  @@unique([tenantId, whatsappPhone])
+  @@index([tenantId])
   @@map("contacts")
 }
 
 model Conversation {
   id                   Int                @id @default(autoincrement())
+  tenantId             Int?
   contactId            Int
   channelNumber        String             @db.VarChar(20)
-  // WhatsApp provider the customer's messages arrive through (WHATSBOX or
-  // META). Operator replies are routed back over the same provider.
   provider             WebhookSource      @default(WHATSBOX)
-  // Meta Cloud API phone number id (only meaningful for provider = META);
-  // WhatsBox uses channelNumber as its channel id.
   phoneNumberId        String?            @db.VarChar(64)
   status               ConversationStatus @default(OPEN)
   whatsappThreadId     String?            @db.VarChar(255)
   bitrix24ThreadId     String?            @db.VarChar(255)
-  bitrix24ExternalChatId String?          @unique @db.VarChar(255)
-  dealId               Int?
+  bitrix24ExternalChatId String?          @db.VarChar(255)
+  leadId               Int?
   lastMessageAt        DateTime?
   lastMessagePreview   String?            @db.VarChar(500)
   lastMessageDirection MessageDirection?
@@ -113,6 +204,7 @@ model Conversation {
   createdAt            DateTime           @default(now())
   updatedAt            DateTime           @updatedAt
 
+  tenant               Tenant?            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   contact              Contact            @relation(fields: [contactId], references: [id], onDelete: Restrict)
   assignedAgent        Agent?             @relation(fields: [assignedAgentId], references: [id], onDelete: SetNull)
   messages             Message[]
@@ -120,6 +212,7 @@ model Conversation {
   autoReplyLogs        AutoReplyLog[]
 
   @@unique([contactId, channelNumber])
+  @@index([tenantId])
   @@index([status])
   @@index([assignedAgentId])
   @@index([lastMessageAt])
@@ -129,10 +222,12 @@ model Conversation {
 
 model Message {
   id                Int             @id @default(autoincrement())
+  tenantId          Int?
   conversationId    Int
   contactId         Int
-  dealId            Int?
-  whatsboxMessageId String?         @unique @db.VarChar(255)
+  leadId            Int?
+  campaignId        Int?
+  whatsboxMessageId String?         @db.VarChar(255)
   wamid             String?         @db.VarChar(255)
   direction         MessageDirection
   type              MessageType     @default(UNKNOWN)
@@ -153,21 +248,57 @@ model Message {
   createdAt         DateTime        @default(now())
   updatedAt         DateTime        @updatedAt
 
+  tenant            Tenant?         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   conversation      Conversation    @relation(fields: [conversationId], references: [id], onDelete: Cascade)
   contact           Contact         @relation(fields: [contactId], references: [id], onDelete: Restrict)
+  campaign          Campaign?       @relation(fields: [campaignId], references: [id], onDelete: SetNull)
   statuses          MessageStatus[]
   autoReplyLogs     AutoReplyLog[]
 
+  @@index([tenantId])
   @@index([conversationId, timestamp])
   @@index([contactId, timestamp])
+  @@index([campaignId])
   @@index([status])
 
   @@map("messages")
 }
 
+model Campaign {
+  id              Int            @id @default(autoincrement())
+  tenantId        Int?
+  name            String         @db.VarChar(255)
+  type            CampaignType   @default(TEXT)
+  status          CampaignStatus @default(DRAFT)
+  body            String?        @db.Text
+  mediaUrl        String?        @db.VarChar(2000)
+  mediaName       String?        @db.VarChar(255)
+  caption         String?        @db.VarChar(1000)
+  createdVia      String         @default("WHATSAPP") @db.VarChar(20)
+  totalRecipients Int            @default(0)
+  sentCount       Int            @default(0)
+  deliveredCount  Int            @default(0)
+  readCount       Int            @default(0)
+  failedCount     Int            @default(0)
+  error           String?        @db.Text
+  startedAt       DateTime?
+  completedAt     DateTime?
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  tenant           Tenant?    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  messages         Message[]
+
+  @@index([tenantId])
+  @@index([status])
+  @@index([createdAt])
+  @@map("campaigns")
+}
+
 model Agent {
   id                Int          @id @default(autoincrement())
-  bitrix24UserId    Int          @unique
+  tenantId          Int?
+  bitrix24UserId    Int
   name              String       @db.VarChar(255)
   email             String?      @db.VarChar(255)
   phone             String?      @db.VarChar(50)
@@ -178,15 +309,19 @@ model Agent {
   createdAt         DateTime     @default(now())
   updatedAt         DateTime     @updatedAt
 
+  tenant            Tenant?      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   conversations     Conversation[]
   assignments       ConversationAssignment[]
 
+  @@unique([tenantId, bitrix24UserId])
+  @@index([tenantId])
   @@map("agents")
 }
 
 model Setting {
   id          Int      @id @default(autoincrement())
-  key         String   @unique @db.VarChar(100)
+  tenantId    Int?
+  key         String   @db.VarChar(100)
   value       Json
   type        String   @default("string") @db.VarChar(20)
   description String?  @db.VarChar(500)
@@ -194,40 +329,43 @@ model Setting {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
+  tenant      Tenant?  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, key])
+  @@index([tenantId])
   @@map("settings")
 }
 
-// One row per Bitrix24 portal that installed the marketplace app. Holds
-// the OAuth token pair (access_token expires hourly, refresh_token for
-// 180 days) plus the application_token used to verify ON_APP_UNINSTALL
-// events (the only credential still trusted after uninstall).
 model Install {
-  id              Int      @id @default(autoincrement())
-  memberId        String   @unique @db.VarChar(64)
-  domain          String   @db.VarChar(255)
-  clientEndpoint  String?  @db.VarChar(500)
-  accessToken     String   @db.VarChar(1024)
-  refreshToken    String   @db.VarChar(1024)
-  applicationToken String? @db.VarChar(255)
-  // Open Channels: the custom connector registered on this portal and the
-  // open line (LINE id) it is bound to. Filled in by the placement
-  // handler or from BITRIX24_OPENLINE_ID during auto-activation.
-  connectorId     String?  @db.VarChar(64)
-  lineId          Int?
-  userId          Int?
-  scope           String?  @db.VarChar(255)
-  status          String   @default("INSTALLED") @db.VarChar(20)
-  expiresAt       DateTime?
-  lastSeenAt      DateTime?
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  id               Int      @id @default(autoincrement())
+  tenantId         Int?
+  memberId         String   @db.VarChar(64)
+  domain           String   @db.VarChar(255)
+  clientEndpoint   String?  @db.VarChar(500)
+  accessToken      String   @db.VarChar(1024)
+  refreshToken     String   @db.VarChar(1024)
+  applicationToken String?  @db.VarChar(255)
+  connectorId      String?  @db.VarChar(64)
+  lineId           Int?
+  userId           Int?
+  scope            String?  @db.VarChar(255)
+  status           String   @default("INSTALLED") @db.VarChar(20)
+  expiresAt        DateTime?
+  lastSeenAt       DateTime?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
 
+  tenant           Tenant?  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, memberId])
+  @@index([tenantId])
   @@index([status, updatedAt])
   @@map("bitrix24_installs")
 }
 
 model WebhookLog {
   id           Int          @id @default(autoincrement())
+  tenantId     Int?
   source       WebhookSource
   eventType    String       @db.VarChar(100)
   payload      Json?
@@ -240,6 +378,9 @@ model WebhookLog {
   createdAt    DateTime     @default(now())
   updatedAt    DateTime     @updatedAt
 
+  tenant       Tenant?      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
   @@index([source, createdAt])
   @@index([status])
 
@@ -285,10 +426,9 @@ model ConversationAssignment {
   @@map("conversation_assignments")
 }
 
-// Pre-defined reply templates (canned messages) used for quick replies
-// and as the source of the automatic welcome/away message.
 model Template {
   id         Int      @id @default(autoincrement())
+  tenantId   Int?
   name       String   @db.VarChar(255)
   body       String   @db.Text
   category   String?  @db.VarChar(100)
@@ -298,17 +438,18 @@ model Template {
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
+  tenant     Tenant?  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   autoReplyLogs AutoReplyLog[]
 
+  @@index([tenantId])
   @@index([isActive])
   @@index([category])
   @@map("templates")
 }
 
-// Audit trail of automatic replies sent by the system (once-per-contact
-// suppression and template usage tracking).
 model AutoReplyLog {
   id             Int      @id @default(autoincrement())
+  tenantId       Int?
   contactId      Int
   conversationId Int
   messageId      Int
@@ -316,11 +457,13 @@ model AutoReplyLog {
   body           String   @db.Text
   createdAt      DateTime @default(now())
 
+  tenant       Tenant?      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   contact      Contact      @relation(fields: [contactId], references: [id], onDelete: Cascade)
   conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
   message      Message      @relation(fields: [messageId], references: [id], onDelete: Cascade)
   template     Template?    @relation(fields: [templateId], references: [id], onDelete: SetNull)
 
+  @@index([tenantId])
   @@index([contactId, createdAt])
   @@index([conversationId])
   @@map("auto_reply_logs")

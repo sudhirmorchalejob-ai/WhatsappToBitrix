@@ -1,9 +1,7 @@
 const prismaClient = require('../database/prisma');
 
 /**
- * Persistence for the Message aggregate — the audit log of every
- * WhatsApp exchange. Incoming webhooks are idempotent by
- * whatsboxMessageId (unique column).
+ * Persistence for the Message aggregate — supports multi-tenant scoping.
  */
 class MessageRepository {
   constructor(prisma = prismaClient) {
@@ -12,40 +10,45 @@ class MessageRepository {
 
   async findById(id) {
     return this.prisma.message.findUnique({
-      where: { id },
+      where: { id: Number(id) },
       include: { conversation: { include: { contact: true } }, statuses: { orderBy: { timestamp: 'asc' } } },
     });
   }
 
-  /** Used for dedup: if an incoming webhook repeats a provider ID, skip. */
-  async findByWhatsboxMessageId(whatsboxMessageId) {
+  async findByWhatsboxMessageId(whatsboxMessageId, tenantId = null) {
     if (!whatsboxMessageId) return null;
-    return this.prisma.message.findUnique({ where: { whatsboxMessageId } });
+    const where = { whatsboxMessageId };
+    if (tenantId !== null && tenantId !== undefined) {
+      where.tenantId = Number(tenantId);
+    }
+    return this.prisma.message.findFirst({ where });
   }
 
-  async findByWamid(wamid) {
+  async findByWamid(wamid, tenantId = null) {
     if (!wamid) return null;
-    return this.prisma.message.findUnique({ where: { wamid } });
+    const where = { wamid };
+    if (tenantId !== null && tenantId !== undefined) {
+      where.tenantId = Number(tenantId);
+    }
+    return this.prisma.message.findFirst({ where });
   }
 
-  /**
-   * Operator replies are deduplicated by the Bitrix24 message id stored
-   * in the JSON payload (b24:{member}:{messageId}); the column keeps its
-   * WhatsApp-provider meaning, so the two id spaces never collide.
-   */
-  async findByOperatorReplyId(operatorReplyId) {
+  async findByOperatorReplyId(operatorReplyId, tenantId = null) {
     if (!operatorReplyId) return null;
-    return this.prisma.message.findFirst({
-      where: { payload: { path: ['operatorReplyId'], equals: operatorReplyId } },
-    });
+    const where = { payload: { path: ['operatorReplyId'], equals: operatorReplyId } };
+    if (tenantId !== null && tenantId !== undefined) {
+      where.tenantId = Number(tenantId);
+    }
+    return this.prisma.message.findFirst({ where });
   }
 
   async create(data) {
     return this.prisma.message.create({
       data: {
-        conversationId: data.conversationId,
-        contactId: data.contactId,
-        dealId: data.dealId ?? null,
+        tenantId: data.tenantId ? Number(data.tenantId) : null,
+        conversationId: Number(data.conversationId),
+        contactId: Number(data.contactId),
+        leadId: data.leadId ? Number(data.leadId) : null,
         whatsboxMessageId: data.whatsboxMessageId ?? null,
         wamid: data.wamid ?? null,
         direction: data.direction,
@@ -55,7 +58,7 @@ class MessageRepository {
         mediaUrl: data.mediaUrl ?? null,
         mediaMimeType: data.mediaMimeType ?? null,
         mediaName: data.mediaName ?? null,
-        mediaSize: data.mediaSize ?? null,
+        mediaSize: data.mediaSize ? Number(data.mediaSize) : null,
         locationData: data.locationData ?? undefined,
         contactCard: data.contactCard ?? undefined,
         payload: data.payload ?? undefined,
@@ -67,14 +70,14 @@ class MessageRepository {
 
   async update(id, data) {
     return this.prisma.message.update({
-      where: { id },
+      where: { id: Number(id) },
       data: {
         ...(data.whatsboxMessageId !== undefined && { whatsboxMessageId: data.whatsboxMessageId }),
         ...(data.wamid !== undefined && { wamid: data.wamid }),
-        ...(data.dealId !== undefined && { dealId: data.dealId }),
+        ...(data.leadId !== undefined && { leadId: data.leadId ? Number(data.leadId) : null }),
         ...(data.status !== undefined && { status: data.status }),
         ...(data.error !== undefined && { error: data.error }),
-        ...(data.retryCount !== undefined && { retryCount: data.retryCount }),
+        ...(data.retryCount !== undefined && { retryCount: Number(data.retryCount) }),
         ...(data.sentAt !== undefined && { sentAt: data.sentAt }),
         ...(data.timestamp !== undefined && { timestamp: data.timestamp }),
       },
@@ -87,19 +90,16 @@ class MessageRepository {
 
   async incrementRetryCount(id) {
     return this.prisma.message.update({
-      where: { id },
+      where: { id: Number(id) },
       data: { retryCount: { increment: 1 } },
     });
   }
 
-  /**
-   * List endpoint support. Every filter is optional. `mediaOnly`
-   * narrows to media message types for the admin/media browser.
-   */
   async list({
+    tenantId = null,
     conversationId = null,
     contactId = null,
-    dealId = null,
+    leadId = null,
     direction = null,
     status = null,
     type = null,
@@ -110,9 +110,12 @@ class MessageRepository {
     offset = 0,
   } = {}) {
     const where = {};
-    if (conversationId) where.conversationId = conversationId;
-    if (contactId) where.contactId = contactId;
-    if (dealId) where.dealId = dealId;
+    if (tenantId !== null && tenantId !== undefined) {
+      where.tenantId = Number(tenantId);
+    }
+    if (conversationId) where.conversationId = Number(conversationId);
+    if (contactId) where.contactId = Number(contactId);
+    if (leadId) where.leadId = Number(leadId);
     if (direction) where.direction = direction;
     if (status) where.status = status;
     if (type) where.type = type;
@@ -124,6 +127,9 @@ class MessageRepository {
       };
     }
 
+    const takeCount = Number(limit) || 50;
+    const skipCount = Number(offset) || 0;
+
     const [items, total] = await this.prisma.$transaction([
       this.prisma.message.findMany({
         where,
@@ -132,8 +138,8 @@ class MessageRepository {
           contact: { select: { id: true, whatsappPhone: true, name: true, firstName: true, lastName: true } },
         },
         orderBy: { timestamp: 'desc' },
-        take: limit,
-        skip: offset,
+        take: takeCount,
+        skip: skipCount,
       }),
       this.prisma.message.count({ where }),
     ]);
@@ -141,19 +147,29 @@ class MessageRepository {
     return { items, total };
   }
 
-  async countByStatus() {
-    const groups = await this.prisma.message.groupBy({ by: ['status'], _count: true });
+  async countByStatus(tenantId = null) {
+    const where = {};
+    if (tenantId !== null && tenantId !== undefined) {
+      where.tenantId = Number(tenantId);
+    }
+    const groups = await this.prisma.message.groupBy({ by: ['status'], where, _count: true });
     return Object.fromEntries(groups.map((g) => [g.status, g._count]));
   }
 
-  async countByDirection() {
-    const groups = await this.prisma.message.groupBy({ by: ['direction'], _count: true });
+  async countByDirection(tenantId = null) {
+    const where = {};
+    if (tenantId !== null && tenantId !== undefined) {
+      where.tenantId = Number(tenantId);
+    }
+    const groups = await this.prisma.message.groupBy({ by: ['direction'], where, _count: true });
     return Object.fromEntries(groups.map((g) => [g.direction, g._count]));
   }
 
-  /** Daily message volume grouped by date, for the dashboard. */
-  async dailyVolume({ from, to } = {}) {
+  async dailyVolume({ tenantId = null, from, to } = {}) {
     const where = {};
+    if (tenantId !== null && tenantId !== undefined) {
+      where.tenantId = Number(tenantId);
+    }
     if (from || to) {
       where.timestamp = {
         ...(from && { gte: from }),
@@ -173,38 +189,39 @@ class MessageRepository {
     return Object.values(buckets).sort((a, b) => a.date.localeCompare(b.date));
   }
 
-  /**
-   * Outgoing messages whose delivery is still pending and that have not
-   * exhausted their retry budget. The retry job pulls these.
-   */
-  async findPendingOutgoing({ maxRetries, limit = 50, olderThanMinutes = 5 }) {
+  async findPendingOutgoing({ tenantId = null, maxRetries, limit = 50, olderThanMinutes = 5 }) {
     const cutoff = new Date(Date.now() - olderThanMinutes * 60 * 1000);
+    const where = {
+      direction: 'OUTGOING',
+      status: { in: ['PENDING', 'FAILED'] },
+      retryCount: { lt: Number(maxRetries) },
+      OR: [
+        { sentAt: null },
+        { sentAt: { lte: cutoff } },
+        { createdAt: { lte: cutoff } },
+      ],
+    };
+    if (tenantId !== null && tenantId !== undefined) {
+      where.tenantId = Number(tenantId);
+    }
     return this.prisma.message.findMany({
-      where: {
-        direction: 'OUTGOING',
-        status: { in: ['PENDING', 'FAILED'] },
-        retryCount: { lt: maxRetries },
-        OR: [
-          { sentAt: null },
-          { sentAt: { lte: cutoff } },
-          { createdAt: { lte: cutoff } },
-        ],
-      },
+      where,
       orderBy: { createdAt: 'asc' },
-      take: limit,
+      take: Number(limit) || 50,
       include: { conversation: { include: { contact: true } } },
     });
   }
 
-  /** Size of the retry backlog (for the diagnostics overview). */
-  async countPendingOutgoing({ maxRetries }) {
-    return this.prisma.message.count({
-      where: {
-        direction: 'OUTGOING',
-        status: { in: ['PENDING', 'FAILED'] },
-        retryCount: { lt: maxRetries },
-      },
-    });
+  async countPendingOutgoing({ tenantId = null, maxRetries }) {
+    const where = {
+      direction: 'OUTGOING',
+      status: { in: ['PENDING', 'FAILED'] },
+      retryCount: { lt: Number(maxRetries) },
+    };
+    if (tenantId !== null && tenantId !== undefined) {
+      where.tenantId = Number(tenantId);
+    }
+    return this.prisma.message.count({ where });
   }
 }
 

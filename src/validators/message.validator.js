@@ -7,7 +7,7 @@ const phoneSchema = z.string().min(3, 'Phone must contain at least 3 digits');
 /**
  * POST /api/messages/send — outgoing text message.
  * `to` may be a raw phone number (service normalizes it). The optional
- * conversationId/dealId link the record to existing CRM entities when
+ * conversationId/leadId link the record to existing CRM entities when
  * the sender already has an open conversation.
  */
 const sendTextSchema = z.object({
@@ -18,7 +18,7 @@ const sendTextSchema = z.object({
   userId: z.union([z.string(), z.number()]).optional(),
   name: z.string().max(255).optional(),
   conversationId: z.coerce.number().int().positive().optional(),
-  dealId: z.coerce.number().int().positive().optional(),
+  leadId: z.coerce.number().int().positive().optional(),
 });
 
 /**
@@ -36,7 +36,7 @@ const sendMediaSchema = z.object({
   userId: z.union([z.string(), z.number()]).optional(),
   name: z.string().max(255).optional(),
   conversationId: z.coerce.number().int().positive().optional(),
-  dealId: z.coerce.number().int().positive().optional(),
+  leadId: z.coerce.number().int().positive().optional(),
 });
 
 /**
@@ -45,7 +45,7 @@ const sendMediaSchema = z.object({
 const listMessagesQuerySchema = z.object({
   conversationId: z.coerce.number().int().positive().optional(),
   contactId: z.coerce.number().int().positive().optional(),
-  dealId: z.coerce.number().int().positive().optional(),
+  leadId: z.coerce.number().int().positive().optional(),
   direction: z.enum(Object.values(MESSAGE_DIRECTION)).optional(),
   status: z.enum(Object.values(MESSAGE_STATUS)).optional(),
   type: z.enum(Object.values(MESSAGE_TYPE)).optional(),

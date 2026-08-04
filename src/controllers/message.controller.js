@@ -4,25 +4,25 @@ const { paginateMeta } = require('../utils/pagination');
 const { OutgoingMessageService } = require('../services/outgoingMessage.service');
 const { MessageRepository } = require('../repositories');
 
-/**
- * REST handlers for the /api/messages routes. Thin adapters: validate
- * already happened in the router, business rules live in the service,
- * persistence in the repository. The factory accepts dependencies so
- * tests can inject fakes for each piece.
- */
 function createMessageController({ service = new OutgoingMessageService(), messageRepo = new MessageRepository() } = {}) {
   async function sendText(req, res) {
-    const message = await service.sendText(req.body);
+    const tenantId = req.tenantId || (req.user && req.user.tenantId);
+    const message = await service.sendText({ ...req.body, tenantId });
     return sendCreated(res, message);
   }
 
   async function sendMedia(req, res) {
-    const message = await service.sendMedia(req.body);
+    const tenantId = req.tenantId || (req.user && req.user.tenantId);
+    const message = await service.sendMedia({ ...req.body, tenantId });
     return sendCreated(res, message);
   }
 
   async function listMessages(req, res) {
-    const { items, total } = await messageRepo.list(req.query);
+    const tenantId = req.tenantId || (req.user && req.user.tenantId);
+    const { items, total } = await messageRepo.list({
+      ...req.query,
+      tenantId,
+    });
     return sendSuccess(res, items, {
       meta: paginateMeta({ total, limit: req.query.limit, offset: req.query.offset }),
     });

@@ -35,11 +35,11 @@ const updateContactSchema = z.object({
   fields: z.record(z.unknown()).refine((v) => Object.keys(v).length > 0, 'No fields to update'),
 });
 
-const createDealSchema = z.object({
+const createLeadSchema = z.object({
   title: z.string().min(1).max(255),
   contactId: idSchema,
   assignedById: idSchema.optional(),
-  stageId: z.string().max(50).optional(),
+  statusId: z.string().max(50).optional(),
   sourceId: z.string().max(50).optional(),
   comments: z.string().max(1000).optional(),
   opportunity: z.number().nonnegative().optional(),
@@ -337,42 +337,42 @@ class Bitrix24Service {
     return res.result;
   }
 
-  // ---------------- Deals ----------------
+  // ---------------- Leads ----------------
 
   /**
-   * Returns the first open deal bound to a contact, newest first.
-   * Pass openOnly=false to search all deals.
+   * Returns the first open lead bound to a contact, newest first.
+   * Pass openOnly=false to search all leads.
    */
-  async searchDealByContact(contactId, { openOnly = true } = {}) {
+  async searchLeadByContact(contactId, { openOnly = true } = {}) {
     const client = await this._ensureConfigured();
     const filter = { CONTACT_ID: contactId };
     if (openOnly) filter.CLOSED = 'N';
 
-    const res = await client.call(BITRIX24_METHODS.DEAL_LIST, {
+    const res = await client.call(BITRIX24_METHODS.LEAD_LIST, {
       filter,
       order: { DATE_CREATE: 'DESC' },
-      select: ['ID', 'TITLE', 'ASSIGNED_BY_ID', 'STAGE_ID', 'CLOSED'],
+      select: ['ID', 'TITLE', 'ASSIGNED_BY_ID', 'STATUS_ID', 'CLOSED'],
       start: -1,
     });
 
     return (res.result && res.result[0]) || null;
   }
 
-  async getDeal(id) {
+  async getLead(id) {
     const client = await this._ensureConfigured();
-    const res = await client.call(BITRIX24_METHODS.DEAL_GET, { id });
+    const res = await client.call(BITRIX24_METHODS.LEAD_GET, { id });
     return res.result || null;
   }
 
-  async createDeal(input) {
-    const { title, contactId, assignedById, stageId, sourceId, comments, opportunity, currencyId } =
-      createDealSchema.parse(input);
+  async createLead(input) {
+    const { title, contactId, assignedById, statusId, sourceId, comments, opportunity, currencyId } =
+      createLeadSchema.parse(input);
 
     const fields = {
       TITLE: title,
       CONTACT_ID: contactId,
       ASSIGNED_BY_ID: assignedById || undefined,
-      STAGE_ID: stageId || undefined,
+      STATUS_ID: statusId || undefined,
       SOURCE_ID: sourceId || undefined,
       COMMENTS: comments || undefined,
       OPPORTUNITY: opportunity || undefined,
@@ -381,42 +381,8 @@ class Bitrix24Service {
     };
 
     const client = await this._ensureConfigured();
-    const res = await client.call(BITRIX24_METHODS.DEAL_ADD, { fields });
+    const res = await client.call(BITRIX24_METHODS.LEAD_ADD, { fields });
     return res.result;
-  }
-
-  async updateDeal(id, fields) {
-    updateContactSchema.parse({ id, fields });
-    const client = await this._ensureConfigured();
-    const res = await client.call(BITRIX24_METHODS.DEAL_UPDATE, { id, fields });
-    return res.result;
-  }
-
-  /**
-   * Reassigns a deal to a Bitrix24 user and writes an audit comment
-   * to its timeline.
-   */
-  async assignDeal(dealId, assignedById, { byUserId, comment } = {}) {
-    const result = await this.updateDeal(dealId, { ASSIGNED_BY_ID: assignedById });
-
-    if (comment) {
-      try {
-        await this.createTimelineComment({
-          entityType: 'deal',
-          entityId: dealId,
-          comment,
-          authorId: byUserId,
-        });
-      } catch (err) {
-        log.warn('timeline comment after assignment failed', {
-          dealId,
-          code: err.code,
-          message: err.message,
-        });
-      }
-    }
-
-    return result;
   }
 
   // ---------------- Timeline & Activities ----------------

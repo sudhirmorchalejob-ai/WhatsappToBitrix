@@ -2,6 +2,8 @@ const { z } = require('zod');
 const { SYNC_STATUS } = require('../constants');
 const { pagination } = require('./common');
 
+const CREATED_VIA = ['WHATSAPP', 'BITRIX24_SYNC'];
+
 /**
  * GET /api/contacts — search by name/phone fragment, filter by sync
  * state, paginated.
@@ -9,6 +11,7 @@ const { pagination } = require('./common');
 const listContactsQuerySchema = z.object({
   search: z.string().trim().max(255).optional(),
   syncStatus: z.enum(Object.values(SYNC_STATUS)).optional(),
+  createdVia: z.enum(CREATED_VIA).optional(),
   ...pagination,
 });
 

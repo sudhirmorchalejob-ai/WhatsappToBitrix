@@ -9,17 +9,17 @@ class WebhookDispatcher {
     this.statusHandler = statusHandler;
   }
 
-  async dispatch(canonical) {
+  async dispatch(canonical, context = {}) {
     if (!canonical || !canonical.event) {
       return { handled: false, skipped: true, reason: 'no-event' };
     }
 
     if (canonical.event === 'message') {
-      return this.messageHandler.handle(canonical);
+      return this.messageHandler.handle(canonical, context);
     }
 
     if (canonical.event === 'status') {
-      return this.statusHandler.handle(canonical);
+      return this.statusHandler.handle(canonical, context);
     }
 
     return { handled: false, skipped: true, reason: `unknown-event:${canonical.event}` };

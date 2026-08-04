@@ -2,35 +2,37 @@ const prismaClient = require('../database/prisma');
 const { SYNC_STATUS } = require('../constants');
 
 /**
- * Persistence for the Contact aggregate. All reads/writes to the
- * `contacts` table go through here so higher layers never touch Prisma
- * directly and stay swappable/testable.
+ * Persistence for the Contact aggregate. Supports multi-tenant scoping.
  */
 class ContactRepository {
   constructor(prisma = prismaClient) {
     this.prisma = prisma;
   }
 
-  /**
-   * Lookup by normalized WhatsApp phone (unique column).
-   * Returns the DB row or null. Do not leak a "not found" as an error —
-   * the caller decides what to do.
-   */
-  async findByWhatsappPhone(whatsappPhone) {
-    return this.prisma.contact.findUnique({ where: { whatsappPhone } });
+  async findByWhatsappPhone(whatsappPhone, tenantId = null) {
+    const where = { whatsappPhone };
+    if (tenantId !== null && tenantId !== undefined) {
+      where.tenantId = Number(tenantId);
+    }
+    return this.prisma.contact.findFirst({ where });
   }
 
-  async findByBitrix24Id(bitrix24ContactId) {
-    return this.prisma.contact.findUnique({ where: { bitrix24ContactId } });
+  async findByBitrix24Id(bitrix24ContactId, tenantId = null) {
+    const where = { bitrix24ContactId: Number(bitrix24ContactId) };
+    if (tenantId !== null && tenantId !== undefined) {
+      where.tenantId = Number(tenantId);
+    }
+    return this.prisma.contact.findFirst({ where });
   }
 
   async findById(id) {
-    return this.prisma.contact.findUnique({ where: { id } });
+    return this.prisma.contact.findUnique({ where: { id: Number(id) } });
   }
 
   async create(data) {
     return this.prisma.contact.create({
       data: {
+        tenantId: data.tenantId ? Number(data.tenantId) : null,
         whatsappPhone: data.whatsappPhone,
         firstName: data.firstName ?? null,
         lastName: data.lastName ?? null,
@@ -38,8 +40,9 @@ class ContactRepository {
         email: data.email ?? null,
         company: data.company ?? null,
         avatarUrl: data.avatarUrl ?? null,
-        bitrix24ContactId: data.bitrix24ContactId ?? null,
+        bitrix24ContactId: data.bitrix24ContactId ? Number(data.bitrix24ContactId) : null,
         syncStatus: data.syncStatus ?? SYNC_STATUS.PENDING,
+        createdVia: data.createdVia ?? 'WHATSAPP',
         meta: data.meta ?? undefined,
       },
     });
@@ -47,7 +50,7 @@ class ContactRepository {
 
   async update(id, data) {
     return this.prisma.contact.update({
-      where: { id },
+      where: { id: Number(id) },
       data: {
         ...(data.firstName !== undefined && { firstName: data.firstName }),
         ...(data.lastName !== undefined && { lastName: data.lastName }),
@@ -56,7 +59,7 @@ class ContactRepository {
         ...(data.company !== undefined && { company: data.company }),
         ...(data.avatarUrl !== undefined && { avatarUrl: data.avatarUrl }),
         ...(data.isBlocked !== undefined && { isBlocked: data.isBlocked }),
-        ...(data.bitrix24ContactId !== undefined && { bitrix24ContactId: data.bitrix24ContactId }),
+        ...(data.bitrix24ContactId !== undefined && { bitrix24ContactId: data.bitrix24ContactId ? Number(data.bitrix24ContactId) : null }),
         ...(data.syncStatus !== undefined && { syncStatus: data.syncStatus }),
         ...(data.lastActivityAt !== undefined && { lastActivityAt: data.lastActivityAt }),
         ...(data.meta !== undefined && { meta: data.meta }),
@@ -64,13 +67,9 @@ class ContactRepository {
     });
   }
 
-  /**
-   * Called whenever a WhatsApp event arrives for this contact. Keeps the
-   * "last seen" signal fresh without clobbering other fields.
-   */
   async touchLastActivity(id, at = new Date()) {
     return this.prisma.contact.update({
-      where: { id },
+      where: { id: Number(id) },
       data: { lastActivityAt: at },
     });
   }
@@ -86,28 +85,31 @@ class ContactRepository {
     return this.update(id, { syncStatus: SYNC_STATUS.FAILED, meta });
   }
 
-  /**
-   * Search endpoint support. `search` matches name / phone with a
-   * case-insensitive LIKE; results are newest-first and paginated.
-   */
-  async list({ search = null, syncStatus = null, limit = 50, offset = 0 } = {}) {
+  async list({ search = null, syncStatus = null, createdVia = null, tenantId = null, limit = 50, offset = 0 } = {}) {
     const where = {};
+    if (tenantId !== null && tenantId !== undefined) {
+      where.tenantId = Number(tenantId);
+    }
     if (search) {
       where.OR = [
-        { name: { contains: search } },
-        { firstName: { contains: search } },
-        { lastName: { contains: search } },
+        { name: { contains: search, mode: 'insensitive' } },
+        { firstName: { contains: search, mode: 'insensitive' } },
+        { lastName: { contains: search, mode: 'insensitive' } },
         { whatsappPhone: { contains: search } },
       ];
     }
     if (syncStatus) where.syncStatus = syncStatus;
+    if (createdVia) where.createdVia = createdVia;
+
+    const takeCount = Number(limit) || 50;
+    const skipCount = Number(offset) || 0;
 
     const [items, total] = await this.prisma.$transaction([
       this.prisma.contact.findMany({
         where,
         orderBy: { createdAt: 'desc' },
-        take: limit,
-        skip: offset,
+        take: takeCount,
+        skip: skipCount,
       }),
       this.prisma.contact.count({ where }),
     ]);
@@ -115,24 +117,28 @@ class ContactRepository {
     return { items, total };
   }
 
-  async countBySyncStatus() {
+  async countBySyncStatus(tenantId = null) {
+    const where = {};
+    if (tenantId !== null && tenantId !== undefined) {
+      where.tenantId = Number(tenantId);
+    }
     const groups = await this.prisma.contact.groupBy({
       by: ['syncStatus'],
+      where,
       _count: true,
     });
     return Object.fromEntries(groups.map((g) => [g.syncStatus, g._count]));
   }
 
-  /**
-   * Contacts still waiting for Bitrix24 sync (created locally while the
-   * CRM was unreachable, or the initial create failed). Oldest-first so
-   * a backlog is drained in order; the resync job consumes these.
-   */
-  async findUnsynced({ statuses = ['PENDING', 'FAILED'], limit = 50 } = {}) {
+  async findUnsynced({ statuses = ['PENDING', 'FAILED'], tenantId = null, limit = 50 } = {}) {
+    const where = { syncStatus: { in: statuses } };
+    if (tenantId !== null && tenantId !== undefined) {
+      where.tenantId = Number(tenantId);
+    }
     return this.prisma.contact.findMany({
-      where: { syncStatus: { in: statuses } },
+      where,
       orderBy: { updatedAt: 'asc' },
-      take: limit,
+      take: Number(limit) || 50,
     });
   }
 }

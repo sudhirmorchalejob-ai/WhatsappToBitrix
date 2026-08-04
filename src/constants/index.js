@@ -41,6 +41,19 @@ const SYNC_STATUS = Object.freeze({
   FAILED: 'FAILED',
 });
 
+const CAMPAIGN_STATUS = Object.freeze({
+  DRAFT: 'DRAFT',
+  PROCESSING: 'PROCESSING',
+  COMPLETED: 'COMPLETED',
+  PARTIAL: 'PARTIAL',
+  FAILED: 'FAILED',
+});
+
+const CAMPAIGN_TYPE = Object.freeze({
+  TEXT: 'TEXT',
+  MEDIA: 'MEDIA',
+});
+
 const PROVIDER = Object.freeze({
   WHATSAPP: 'WHATSAPP',
   BITRIX24: 'BITRIX24',
@@ -86,11 +99,11 @@ const BITRIX24_METHODS = Object.freeze({
   CONTACT_UPDATE: 'crm.contact.update',
   DUPLICATE_FIND: 'crm.duplicate.findbycomm',
 
-  // Deals
-  DEAL_GET: 'crm.deal.get',
-  DEAL_LIST: 'crm.deal.list',
-  DEAL_ADD: 'crm.deal.add',
-  DEAL_UPDATE: 'crm.deal.update',
+  // Leads
+  LEAD_GET: 'crm.lead.get',
+  LEAD_LIST: 'crm.lead.list',
+  LEAD_ADD: 'crm.lead.add',
+  LEAD_UPDATE: 'crm.lead.update',
 
   // Timeline
   TIMELINE_COMMENT_ADD: 'crm.timeline.comment.add',
@@ -139,6 +152,8 @@ module.exports = {
   MESSAGE_STATUS,
   CONVERSATION_STATUS,
   SYNC_STATUS,
+  CAMPAIGN_STATUS,
+  CAMPAIGN_TYPE,
   PROVIDER,
   WEBHOOK_SOURCE,
   WEBHOOK_LOG_STATUS,

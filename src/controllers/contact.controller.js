@@ -3,13 +3,13 @@ const AppError = require('../utils/AppError');
 const { paginateMeta } = require('../utils/pagination');
 const { ContactRepository } = require('../repositories');
 
-/**
- * REST handlers for /api/contacts. Read-only search + detail; contact
- * creation is driven by the inbound webhook / outgoing send path.
- */
 function createContactController({ contactRepo = new ContactRepository() } = {}) {
   async function listContacts(req, res) {
-    const { items, total } = await contactRepo.list(req.query);
+    const tenantId = req.tenantId || (req.user && req.user.tenantId);
+    const { items, total } = await contactRepo.list({
+      ...req.query,
+      tenantId,
+    });
     return sendSuccess(res, items, {
       meta: paginateMeta({ total, limit: req.query.limit, offset: req.query.offset }),
     });

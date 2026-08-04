@@ -4,17 +4,16 @@ const { paginateMeta } = require('../utils/pagination');
 const { ConversationRepository } = require('../repositories');
 const { RoutingService } = require('../services/routing.service');
 
-/**
- * REST handlers for /api/conversations. Search + detail, plus operator
- * assignment control; the conversation lifecycle is otherwise driven by
- * the webhook/send paths.
- */
 function createConversationController({
   conversationRepo = new ConversationRepository(),
   routingService = new RoutingService(),
 } = {}) {
   async function listConversations(req, res) {
-    const { items, total } = await conversationRepo.list(req.query);
+    const tenantId = req.tenantId || (req.user && req.user.tenantId);
+    const { items, total } = await conversationRepo.list({
+      ...req.query,
+      tenantId,
+    });
     return sendSuccess(res, items, {
       meta: paginateMeta({ total, limit: req.query.limit, offset: req.query.offset }),
     });

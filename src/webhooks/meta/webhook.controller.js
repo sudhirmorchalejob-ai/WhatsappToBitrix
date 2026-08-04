@@ -4,6 +4,7 @@ const { WEBHOOK_LOG_STATUS } = require('../../constants');
 const { WebhookLogRepository } = require('../../repositories/webhookLog.repository');
 const { normalizeWebhook } = require('./normalizers');
 const { WebhookDispatcher } = require('../whatsbox/dispatcher');
+const { createTenantChannelResolver } = require('../tenantResolver');
 
 const log = logger.childFor('meta-webhook-controller');
 
@@ -18,6 +19,7 @@ const dispatcher = new WebhookDispatcher({
 
 async function handle(req, res) {
   const signature = req.get('x-hub-signature-256') || null;
+  const resolveTenantId = createTenantChannelResolver();
 
   // req.body is the RAW buffer (express.raw mounted on this route)
   let payload;
@@ -45,9 +47,11 @@ async function handle(req, res) {
   const processed = [];
 
   for (const { kind, canonical } of events) {
+    const tenantId = await resolveTenantId(canonical.channelId);
     let webhookLog;
     try {
       webhookLog = await webhookLogRepository.create({
+        tenantId,
         source: 'META',
         eventType: `${kind}_${canonical.type || canonical.status || 'unknown'}`,
         payload: canonical.raw,
@@ -61,7 +65,7 @@ async function handle(req, res) {
     }
 
     try {
-      const result = await dispatcher.dispatch(canonical);
+      const result = await dispatcher.dispatch(canonical, { tenantId });
       await webhookLogRepository.markProcessed(webhookLog.id, {
         status: WEBHOOK_LOG_STATUS.PROCESSED,
         processedAt: new Date(),

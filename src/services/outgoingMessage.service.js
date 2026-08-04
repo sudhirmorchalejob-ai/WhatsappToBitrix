@@ -51,12 +51,12 @@ class OutgoingMessageService {
 
   async sendText(input) {
     const { conversation, messageContact } = await this._resolveContext(input);
-    const dealId = await this._resolveDealId({ input, conversation, messageContact, firstBody: input.body });
+    const leadId = await this._resolveLeadId({ input, conversation, messageContact, firstBody: input.body });
 
     const message = await this.service.saveMessage({
       conversation,
       contact: messageContact,
-      dealId,
+      leadId,
       direction: MESSAGE_DIRECTION.OUTGOING,
       type: MESSAGE_TYPE.TEXT,
       body: input.body,
@@ -83,12 +83,12 @@ class OutgoingMessageService {
   async sendMedia(input) {
     const { conversation, messageContact } = await this._resolveContext(input);
     const type = this._toDbType(input);
-    const dealId = await this._resolveDealId({ input, conversation, messageContact, firstBody: input.caption });
+    const leadId = await this._resolveLeadId({ input, conversation, messageContact, firstBody: input.caption });
 
     const message = await this.service.saveMessage({
       conversation,
       contact: messageContact,
-      dealId,
+      leadId,
       direction: MESSAGE_DIRECTION.OUTGOING,
       type,
       body: null,
@@ -146,17 +146,17 @@ class OutgoingMessageService {
   }
 
   /**
-   * Explicit dealId wins; otherwise reuse/search/create the open deal via
-   * the shared orchestration. A missing open deal is non-fatal.
+   * Explicit leadId wins; otherwise reuse/search/create the open lead via
+   * the shared orchestration. A missing open lead is non-fatal.
    */
-  async _resolveDealId({ input, conversation, messageContact, firstBody }) {
-    if (input.dealId) return Number(input.dealId);
-    const result = await this.service.ensureOpenDeal({
+  async _resolveLeadId({ input, conversation, messageContact, firstBody }) {
+    if (input.leadId) return Number(input.leadId);
+    const result = await this.service.ensureOpenLead({
       contact: messageContact,
       conversation,
       firstMessageBody: firstBody || null,
     });
-    return result.deal ? Number(result.deal.ID) : null;
+    return result.lead ? Number(result.lead.ID) : null;
   }
 
   /** Maps the WhatsBox media type to the local Message.type (PDF-aware). */

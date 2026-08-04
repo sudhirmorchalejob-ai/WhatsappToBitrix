@@ -1,7 +1,7 @@
 const logger = require('../utils/logger');
 const { env } = require('../config');
 const { MESSAGE_TYPE, MESSAGE_STATUS, WEBHOOK_SOURCE } = require('../constants');
-const { MessageRepository, MessageStatusRepository } = require('../repositories');
+const { MessageRepository, MessageStatusRepository, ActivityLogRepository } = require('../repositories');
 const { WhatsBoxService } = require('../services/whatsbox');
 const { MetaService } = require('../services/meta');
 const { ConversationService } = require('../services/conversation.service');
@@ -39,6 +39,7 @@ class RetryOutgoingMessagesJob {
     whatsbox = new WhatsBoxService(),
     meta = new MetaService(),
     conversationService = new ConversationService(),
+    activityLogRepo = null,
     intervalMs = env.RETRY_INTERVAL_MS,
     maxRetries = env.OUTGOING_MAX_RETRIES,
   } = {}) {
@@ -47,6 +48,7 @@ class RetryOutgoingMessagesJob {
     this.whatsbox = whatsbox;
     this.meta = meta;
     this.conversationService = conversationService;
+    this.activityLogRepo = activityLogRepo;
     this.intervalMs = intervalMs;
     this.maxRetries = maxRetries;
     this.timer = null;
@@ -102,12 +104,24 @@ class RetryOutgoingMessagesJob {
   }
 
   async _retryOne(message, maxRetries = this.maxRetries) {
+    const tenantId = message.tenantId || (message.conversation && message.conversation.tenantId) || null;
+    await this._logActivity(tenantId, {
+      action: 'MESSAGE_RETRY_STARTED',
+      category: 'MESSAGE',
+      details: { messageId: message.id, retryCount: message.retryCount + 1 },
+    });
+
     try {
       const sendResult = await this._send(message);
       await this._backfillProviderId(message, sendResult);
       await this._recordAttempt(message, MESSAGE_STATUS.SENT, null, sendResult.raw);
       await this.messageRepo.updateStatus(message.id, MESSAGE_STATUS.SENT, { sentAt: new Date() });
       log.info('outgoing message re-sent', { messageId: message.id });
+      await this._logActivity(tenantId, {
+        action: 'MESSAGE_RETRY_SUCCEEDED',
+        category: 'MESSAGE',
+        details: { messageId: message.id },
+      });
       return { messageId: message.id, ok: true };
     } catch (err) {
       const retryCount = message.retryCount + 1;
@@ -115,7 +129,23 @@ class RetryOutgoingMessagesJob {
       await this.messageRepo.update(message.id, { retryCount, status, error: err.message });
       await this._recordAttempt(message, status, err.message, null);
       log.warn('retry attempt failed', { messageId: message.id, retryCount, status, error: err.message });
+      if (status === MESSAGE_STATUS.FAILED) {
+        await this._logActivity(tenantId, {
+          action: 'MESSAGE_DELIVERY_FAILED',
+          category: 'MESSAGE',
+          details: { messageId: message.id, error: err.message },
+        });
+      }
       return { messageId: message.id, ok: false, error: err.message, retryCount };
+    }
+  }
+
+  async _logActivity(tenantId, entry) {
+    if (!this.activityLogRepo) return;
+    try {
+      await this.activityLogRepo.log({ tenantId, ...entry });
+    } catch (err) {
+      log.warn('activity log failed', { error: err.message });
     }
   }
 

@@ -1,9 +1,7 @@
 const prismaClient = require('../database/prisma');
 
 /**
- * Persistence for the Conversation aggregate. Conversations are keyed by
- * (contactId, channelNumber) — one open chat per contact per WhatsApp
- * channel number.
+ * Persistence for the Conversation aggregate. Supports multi-tenant scoping.
  */
 class ConversationRepository {
   constructor(prisma = prismaClient) {
@@ -12,27 +10,31 @@ class ConversationRepository {
 
   async findById(id) {
     return this.prisma.conversation.findUnique({
-      where: { id },
+      where: { id: Number(id) },
       include: { contact: true },
     });
   }
 
-  async findByContactAndChannel(contactId, channelNumber) {
-    return this.prisma.conversation.findUnique({
-      where: { contactId_channelNumber: { contactId, channelNumber } },
+  async findByContactAndChannel(contactId, channelNumber, tenantId = null) {
+    const where = { contactId_channelNumber: { contactId: Number(contactId), channelNumber } };
+    const conv = await this.prisma.conversation.findUnique({
+      where,
       include: { contact: true },
     });
+    if (conv && tenantId !== null && tenantId !== undefined && conv.tenantId !== Number(tenantId)) {
+      return null;
+    }
+    return conv;
   }
 
-  /**
-   * Finds the conversation referenced by the Open Channels external chat
-   * id (the `chat.id` we pass to imconnector.send.messages and that
-   * Bitrix24 echoes back in ONIMCONNECTORMESSAGEADD events).
-   */
-  async findByExternalChatId(bitrix24ExternalChatId) {
+  async findByExternalChatId(bitrix24ExternalChatId, tenantId = null) {
     if (!bitrix24ExternalChatId) return null;
-    return this.prisma.conversation.findUnique({
-      where: { bitrix24ExternalChatId },
+    const where = { bitrix24ExternalChatId };
+    if (tenantId !== null && tenantId !== undefined) {
+      where.tenantId = Number(tenantId);
+    }
+    return this.prisma.conversation.findFirst({
+      where,
       include: { contact: true },
     });
   }
@@ -40,7 +42,8 @@ class ConversationRepository {
   async create(data) {
     return this.prisma.conversation.create({
       data: {
-        contactId: data.contactId,
+        tenantId: data.tenantId ? Number(data.tenantId) : null,
+        contactId: Number(data.contactId),
         channelNumber: data.channelNumber,
         provider: data.provider ?? 'WHATSBOX',
         phoneNumberId: data.phoneNumberId ?? null,
@@ -48,43 +51,39 @@ class ConversationRepository {
         whatsappThreadId: data.whatsappThreadId ?? null,
         bitrix24ThreadId: data.bitrix24ThreadId ?? null,
         bitrix24ExternalChatId: data.bitrix24ExternalChatId ?? null,
-        dealId: data.dealId ?? null,
-        assignedAgentId: data.assignedAgentId ?? null,
+        leadId: data.leadId ? Number(data.leadId) : null,
+        assignedAgentId: data.assignedAgentId ? Number(data.assignedAgentId) : null,
         lastMessageAt: data.lastMessageAt ?? null,
         lastMessagePreview: data.lastMessagePreview ?? null,
         lastMessageDirection: data.lastMessageDirection ?? null,
         lastMessageType: data.lastMessageType ?? null,
-        unreadCount: data.unreadCount ?? 0,
+        unreadCount: data.unreadCount ? Number(data.unreadCount) : 0,
       },
     });
   }
 
   async update(id, data) {
     return this.prisma.conversation.update({
-      where: { id },
+      where: { id: Number(id) },
       data: {
         ...(data.status !== undefined && { status: data.status }),
-        ...(data.dealId !== undefined && { dealId: data.dealId }),
+        ...(data.leadId !== undefined && { leadId: data.leadId ? Number(data.leadId) : null }),
         ...(data.provider !== undefined && { provider: data.provider }),
         ...(data.phoneNumberId !== undefined && { phoneNumberId: data.phoneNumberId }),
         ...(data.whatsappThreadId !== undefined && { whatsappThreadId: data.whatsappThreadId }),
         ...(data.bitrix24ThreadId !== undefined && { bitrix24ThreadId: data.bitrix24ThreadId }),
         ...(data.bitrix24ExternalChatId !== undefined && { bitrix24ExternalChatId: data.bitrix24ExternalChatId }),
-        ...(data.assignedAgentId !== undefined && { assignedAgentId: data.assignedAgentId }),
+        ...(data.assignedAgentId !== undefined && { assignedAgentId: data.assignedAgentId ? Number(data.assignedAgentId) : null }),
         ...(data.closedAt !== undefined && { closedAt: data.closedAt }),
         ...(data.lastMessageAt !== undefined && { lastMessageAt: data.lastMessageAt }),
         ...(data.lastMessagePreview !== undefined && { lastMessagePreview: data.lastMessagePreview }),
         ...(data.lastMessageDirection !== undefined && { lastMessageDirection: data.lastMessageDirection }),
         ...(data.lastMessageType !== undefined && { lastMessageType: data.lastMessageType }),
-        ...(data.unreadCount !== undefined && { unreadCount: data.unreadCount }),
+        ...(data.unreadCount !== undefined && { unreadCount: Number(data.unreadCount) }),
       },
     });
   }
 
-  /**
-   * Updates the conversation snapshot after every message.
-   * `incrementUnread` is true only for INCOMING messages.
-   */
   async touchLastMessage(id, { direction, type, preview, at = new Date(), incrementUnread = false }) {
     const data = {
       lastMessageAt: at,
@@ -93,10 +92,9 @@ class ConversationRepository {
       lastMessagePreview: preview ? preview.slice(0, 500) : null,
     };
     if (incrementUnread) data.unreadCount = { increment: 1 };
-    return this.prisma.conversation.update({ where: { id }, data });
+    return this.prisma.conversation.update({ where: { id: Number(id) }, data });
   }
 
-  /** Marks a conversation as OPEN when new activity arrives. */
   async reopen(id) {
     return this.update(id, { status: 'OPEN', closedAt: null });
   }
@@ -105,31 +103,32 @@ class ConversationRepository {
     return this.update(id, { status: 'CLOSED', closedAt });
   }
 
-  /**
-   * List endpoint support with optional filters (status, assigned agent,
-   * free-text contact search) and pagination. Returns contact info for
-   * the UI and the latest message preview.
-   */
-  async list({ search = null, status = null, assignedAgentId = null, limit = 50, offset = 0 } = {}) {
+  async list({ search = null, status = null, assignedAgentId = null, tenantId = null, limit = 50, offset = 0 } = {}) {
     const where = {};
+    if (tenantId !== null && tenantId !== undefined) {
+      where.tenantId = Number(tenantId);
+    }
     if (status) where.status = status;
-    if (assignedAgentId) where.assignedAgentId = assignedAgentId;
+    if (assignedAgentId) where.assignedAgentId = Number(assignedAgentId);
     if (search) {
       where.OR = [
-        { contact: { name: { contains: search } } },
-        { contact: { firstName: { contains: search } } },
-        { contact: { lastName: { contains: search } } },
+        { contact: { name: { contains: search, mode: 'insensitive' } } },
+        { contact: { firstName: { contains: search, mode: 'insensitive' } } },
+        { contact: { lastName: { contains: search, mode: 'insensitive' } } },
         { contact: { whatsappPhone: { contains: search } } },
       ];
     }
+
+    const takeCount = Number(limit) || 50;
+    const skipCount = Number(offset) || 0;
 
     const [items, total] = await this.prisma.$transaction([
       this.prisma.conversation.findMany({
         where,
         include: { contact: true, assignedAgent: { select: { id: true, name: true } } },
         orderBy: [{ lastMessageAt: 'desc' }, { updatedAt: 'desc' }],
-        take: limit,
-        skip: offset,
+        take: takeCount,
+        skip: skipCount,
       }),
       this.prisma.conversation.count({ where }),
     ]);
@@ -137,16 +136,25 @@ class ConversationRepository {
     return { items, total };
   }
 
-  async countByStatus() {
+  async countByStatus(tenantId = null) {
+    const where = {};
+    if (tenantId !== null && tenantId !== undefined) {
+      where.tenantId = Number(tenantId);
+    }
     const groups = await this.prisma.conversation.groupBy({
       by: ['status'],
+      where,
       _count: true,
     });
     return Object.fromEntries(groups.map((g) => [g.status, g._count]));
   }
 
-  async countOpen() {
-    return this.prisma.conversation.count({ where: { status: 'OPEN' } });
+  async countOpen(tenantId = null) {
+    const where = { status: 'OPEN' };
+    if (tenantId !== null && tenantId !== undefined) {
+      where.tenantId = Number(tenantId);
+    }
+    return this.prisma.conversation.count({ where });
   }
 }
 

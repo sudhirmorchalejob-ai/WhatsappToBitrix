@@ -9,9 +9,19 @@ class WebhookLogRepository {
     this.prisma = prisma;
   }
 
-  async create({ source, eventType, payload, status = 'RECEIVED', httpCode = null, errorMessage = null, ip = null, signature = null }) {
+  async create({ tenantId = null, source, eventType, payload, status = 'RECEIVED', httpCode = null, errorMessage = null, ip = null, signature = null }) {
     return this.prisma.webhookLog.create({
-      data: { source, eventType, payload, status, httpCode, errorMessage, ip, signature },
+      data: {
+        tenantId: tenantId !== null && tenantId !== undefined ? Number(tenantId) : null,
+        source,
+        eventType,
+        payload,
+        status,
+        httpCode,
+        errorMessage,
+        ip,
+        signature,
+      },
     });
   }
 
@@ -22,25 +32,27 @@ class WebhookLogRepository {
     });
   }
 
-  async listRecent({ source = null, status = null, limit = 50, offset = 0 } = {}) {
+  async listRecent({ tenantId = null, source = null, status = null, limit = 50, offset = 0 } = {}) {
+    const where = {};
+    if (tenantId !== null && tenantId !== undefined) where.tenantId = Number(tenantId);
+    if (source) where.source = source;
+    if (status) where.status = status;
+
     return this.prisma.webhookLog.findMany({
-      where: {
-        ...(source && { source }),
-        ...(status && { status }),
-      },
+      where,
       orderBy: { createdAt: 'desc' },
       take: limit,
       skip: offset,
     });
   }
 
-  async count({ source = null, status = null } = {}) {
-    return this.prisma.webhookLog.count({
-      where: {
-        ...(source && { source }),
-        ...(status && { status }),
-      },
-    });
+  async count({ tenantId = null, source = null, status = null } = {}) {
+    const where = {};
+    if (tenantId !== null && tenantId !== undefined) where.tenantId = Number(tenantId);
+    if (source) where.source = source;
+    if (status) where.status = status;
+
+    return this.prisma.webhookLog.count({ where });
   }
 
   async countBySource({ source, from = null, to = null } = {}) {

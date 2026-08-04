@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="WhatsApp to Bitrix24 lead management dashboard — view, sync and manage all leads created from WhatsApp.">
+  <title>WA → Bitrix24 Lead Dashboard</title>
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+
+  <!-- ==================== LOGIN ==================== -->
+  <div id="view-login" class="hidden">
+    <div class="login-card animate-fade">
+      <div class="login-logo">
+        <div class="logo-icon">💬</div>
+        <div>
+          <div class="logo-text-main">WA → Bitrix24</div>
+          <div class="logo-text-sub">Lead Dashboard</div>
+        </div>
+      </div>
+
+      <h1 class="login-title">Welcome back</h1>
+      <p class="login-subtitle">Sign in to manage your WhatsApp leads</p>
+
+      <form id="form-login" autocomplete="off">
+        <div class="form-group">
+          <label class="form-label" for="login-email">Email Address</label>
+          <input type="email" id="login-email" class="form-control"
+            placeholder="admin@system.com" required>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="login-password">Password</label>
+          <input type="password" id="login-password" class="form-control"
+            placeholder="••••••••" required>
+        </div>
+
+        <div id="login-error" class="error-msg hidden"></div>
+
+        <button type="submit" id="btn-login" class="btn btn-primary btn-full" style="padding:13px;">
+          Sign In
+        </button>
+      </form>
+
+      <div class="login-hint">
+        <strong>Temporary credentials:</strong><br>
+        Email: <strong>admin@system.com</strong><br>
+        Password: <strong>Admin@123456</strong>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== APP SHELL ==================== -->
+  <div id="app-shell" class="hidden">
+
+    <!-- Sidebar -->
+    <aside class="sidebar">
+      <div class="sidebar-logo">
+        <div class="logo-icon">💬</div>
+        <div>
+          <div class="logo-text-main">WA→Bitrix24</div>
+          <div class="logo-text-sub">Lead Manager</div>
+        </div>
+      </div>
+
+      <nav class="sidebar-nav">
+        <div class="nav-group-label">Overview</div>
+        <a class="nav-item active" data-page="dashboard" id="nav-dashboard">
+          <span class="nav-icon">📊</span> Dashboard
+        </a>
+        <a class="nav-item" data-page="leads" id="nav-leads">
+          <span class="nav-icon">🎯</span> WhatsApp Leads
+        </a>
+
+        <div class="nav-group-label" style="margin-top:8px;">Configuration</div>
+        <a class="nav-item" data-page="setup" id="nav-setup">
+          <span class="nav-icon">🔗</span> Webhook Setup
+        </a>
+      </nav>
+
+      <div class="sidebar-footer">
+        <div class="user-row">
+          <div class="avatar" id="user-avatar">A</div>
+          <div class="user-meta">
+            <div class="user-name" id="user-display-name">Admin</div>
+            <div class="user-role">Administrator</div>
+          </div>
+          <button class="logout-btn" id="btn-logout" title="Sign out">🚪</button>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Main Content -->
+    <main class="main-content">
+
+      <!-- ========== PAGE: DASHBOARD ========== -->
+      <section id="page-dashboard" class="page-section">
+        <div class="page-header">
+          <div>
+            <h1 class="page-title">WhatsApp Lead Dashboard</h1>
+            <p class="page-desc">All leads created in Bitrix24 via WhatsApp messages, campaigns &amp; auto-replies.</p>
+          </div>
+          <div class="page-actions">
+            <button class="btn btn-ghost btn-sm" id="btn-refresh-dashboard">🔄 Refresh</button>
+            <button class="btn btn-primary btn-sm" id="btn-sync-dash">⚡ Sync Now</button>
+          </div>
+        </div>
+
+        <!-- Connection Status -->
+        <div class="conn-banner" id="conn-banner">
+          <div>
+            <div class="conn-label">Integration Status</div>
+            <div class="conn-sub">Live connection to Bitrix24 CRM &amp; WhatsApp Gateway</div>
+          </div>
+          <div class="conn-pills">
+            <div class="status-pill status-offline" id="status-b24">
+              <span class="status-dot"></span> Bitrix24
+            </div>
+            <div class="status-pill status-offline" id="status-wa">
+              <span class="status-dot"></span> WhatsApp
+            </div>
+          </div>
+        </div>
+
+        <!-- Sync status bar -->
+        <div id="sync-status-banner" class="status-box info hidden">
+          <span id="sync-status-text">Syncing leads from Bitrix24...</span>
+          <div class="sync-bar-wrap" id="sync-bar-wrap" style="display:none;">
+            <div class="sync-bar" id="sync-bar"></div>
+          </div>
+        </div>
+
+        <!-- KPI Cards -->
+        <div class="kpi-grid" style="margin-top:20px;">
+          <div class="kpi-card">
+            <div class="kpi-top">
+              <span class="kpi-label">Total WA Leads</span>
+              <div class="kpi-icon" style="background:var(--green-bg);">📲</div>
+            </div>
+            <div class="kpi-value" id="kpi-wa-leads">—</div>
+            <div class="kpi-sub">All-time via WhatsApp</div>
+          </div>
+
+          <div class="kpi-card">
+            <div class="kpi-top">
+              <span class="kpi-label">Today's Leads</span>
+              <div class="kpi-icon" style="background:var(--blue-bg);">📈</div>
+            </div>
+            <div class="kpi-value" id="kpi-today-leads">—</div>
+            <div class="kpi-sub">Created today</div>
+          </div>
+
+          <div class="kpi-card">
+            <div class="kpi-top">
+              <span class="kpi-label">Synced to Bitrix</span>
+              <div class="kpi-icon" style="background:rgba(124,92,252,0.1);">🔗</div>
+            </div>
+            <div class="kpi-value" id="kpi-synced">—</div>
+            <div class="kpi-sub">Contacts linked in CRM</div>
+          </div>
+
+          <div class="kpi-card">
+            <div class="kpi-top">
+              <span class="kpi-label">Active Chats</span>
+              <div class="kpi-icon" style="background:var(--orange-bg);">💬</div>
+            </div>
+            <div class="kpi-value" id="kpi-active-chats">—</div>
+            <div class="kpi-sub">Open conversations</div>
+          </div>
+
+          <div class="kpi-card">
+            <div class="kpi-top">
+              <span class="kpi-label">Auto-Replies Sent</span>
+              <div class="kpi-icon" style="background:var(--green-bg);">🤖</div>
+            </div>
+            <div class="kpi-value" id="kpi-auto-replies">—</div>
+            <div class="kpi-sub">With lead created</div>
+          </div>
+
+          <div class="kpi-card">
+            <div class="kpi-top">
+              <span class="kpi-label">Campaign Leads</span>
+              <div class="kpi-icon" style="background:var(--blue-bg);">🚀</div>
+            </div>
+            <div class="kpi-value" id="kpi-campaign-leads">—</div>
+            <div class="kpi-sub">Outbound campaign results</div>
+          </div>
+        </div>
+
+        <!-- Recent Leads Table -->
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <div class="card-title">Recent WhatsApp Leads</div>
+              <div style="font-size:12px;color:var(--text-muted);margin-top:3px;">Latest contacts created in Bitrix24 via WhatsApp</div>
+            </div>
+            <button class="btn btn-ghost btn-sm" data-page="leads" id="btn-view-all">View All →</button>
+          </div>
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>WhatsApp Number</th>
+                <th>Bitrix24 ID</th>
+                <th>Lead Source</th>
+                <th>Sync</th>
+                <th>Created</th>
+              </tr>
+            </thead>
+            <tbody id="table-recent">
+              <tr><td colspan="6" class="table-empty"><div class="empty-icon">⏳</div>Loading recent leads...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- ========== PAGE: ALL LEADS ========== -->
+      <section id="page-leads" class="page-section hidden">
+        <div class="page-header">
+          <div>
+            <h1 class="page-title">WhatsApp Leads</h1>
+            <p class="page-desc">All contacts and leads created in Bitrix24 from WhatsApp interactions.</p>
+          </div>
+          <div class="page-actions">
+            <button class="btn btn-primary btn-sm" id="btn-sync-leads">⚡ Sync Now</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <div class="search-wrap">
+              <span>🔍</span>
+              <input type="text" id="search-leads" placeholder="Search by name, phone, Bitrix ID...">
+            </div>
+            <div style="font-size:12px;color:var(--text-muted);" id="leads-count">— leads</div>
+          </div>
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>WhatsApp Number</th>
+                <th>Email</th>
+                <th>Bitrix24 Contact ID</th>
+                <th>Lead Source</th>
+                <th>Sync Status</th>
+                <th>Created</th>
+              </tr>
+            </thead>
+            <tbody id="table-leads">
+              <tr><td colspan="7" class="table-empty"><div class="empty-icon">⏳</div>Loading leads...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- ========== PAGE: WEBHOOK SETUP ========== -->
+      <section id="page-setup" class="page-section hidden">
+        <div class="page-header">
+          <div>
+            <h1 class="page-title">Webhook Setup</h1>
+            <p class="page-desc">Configure your Bitrix24 and WhatsApp webhooks, then run auto-sync to import all leads.</p>
+          </div>
+        </div>
+
+        <div class="setup-wrapper">
+
+          <!-- Bitrix24 Webhook -->
+          <div class="setup-section animate-fade">
+            <div class="setup-section-title">
+              <div class="setup-section-icon" style="background:rgba(59,158,255,0.1);">🏢</div>
+              Bitrix24 Webhook
+            </div>
+            <div class="form-group">
+              <label class="form-label">Bitrix24 Inbound Webhook URL</label>
+              <input type="url" id="input-b24-url" class="form-control"
+                placeholder="https://your-domain.bitrix24.com/rest/1/xxxxxxxxxx/">
+            </div>
+            <div style="font-size:12px;color:var(--text-muted);line-height:1.7;">
+              Go to <strong>Bitrix24 → Developer Resources → Inbound Webhooks</strong> and copy the URL here.
+              This is used to create contacts and leads automatically from WhatsApp.
+            </div>
+          </div>
+
+          <!-- WhatsApp Webhook -->
+          <div class="setup-section animate-fade" style="animation-delay:0.07s;">
+            <div class="setup-section-title">
+              <div class="setup-section-icon" style="background:var(--green-bg);">📱</div>
+              WhatsApp Webhook
+            </div>
+            <div class="form-group">
+              <label class="form-label">WhatsApp Gateway Webhook URL</label>
+              <input type="url" id="input-wa-webhook" class="form-control"
+                placeholder="https://your-server.com/webhooks/whatsbox">
+            </div>
+            <div class="form-group">
+              <label class="form-label">WhatsApp Channel Phone Number</label>
+              <input type="text" id="input-wa-channel" class="form-control"
+                placeholder="e.g. 919876543210">
+            </div>
+            <div style="font-size:12px;color:var(--text-muted);line-height:1.7;">
+              Enter the URL where WhatsBox/Meta will deliver incoming messages, and the phone number
+              of your WhatsApp Business channel.
+            </div>
+          </div>
+
+          <!-- Actions -->
+          <div class="setup-section animate-fade" style="animation-delay:0.14s;">
+            <div class="setup-section-title">
+              <div class="setup-section-icon" style="background:var(--orange-bg);">⚡</div>
+              Save &amp; Auto-Sync
+            </div>
+
+            <div id="setup-status" class="status-box info hidden"></div>
+
+            <div style="display:flex;gap:12px;flex-wrap:wrap;margin-top:16px;">
+              <button class="btn btn-ghost" id="btn-test-conn">
+                🧪 Test Connection
+              </button>
+              <button class="btn btn-ghost" id="btn-sync-setup">
+                🔄 Sync All Leads from Bitrix24
+              </button>
+              <button class="btn btn-primary" id="btn-save-setup">
+                💾 Save Webhooks
+              </button>
+            </div>
+
+            <div style="margin-top:18px;padding:14px;background:rgba(0,196,140,0.04);border:1px solid rgba(0,196,140,0.1);border-radius:var(--radius);font-size:12px;color:var(--text-muted);line-height:1.8;">
+              <strong style="color:var(--text);">Auto-Sync</strong> pulls all existing contacts from Bitrix24 into this system so
+              new WhatsApp messages instantly match them and create leads. Run this once after setup,
+              and again whenever you add new contacts in Bitrix24.
+            </div>
+          </div>
+
+        </div>
+      </section>
+
+    </main>
+  </div>
+
+  <script src="/js/app.js"></script>
+</body>
+</html>

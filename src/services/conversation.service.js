@@ -15,10 +15,6 @@ const {
 
 const log = logger.childFor('conversation-service');
 
-/**
- * Monotonic order for delivery states. FAILED is handled explicitly
- * because it can legitimately interrupt any other state.
- */
 const STATUS_ORDER = {
   [MESSAGE_STATUS.PENDING]: 0,
   [MESSAGE_STATUS.SENT]: 1,
@@ -26,17 +22,6 @@ const STATUS_ORDER = {
   [MESSAGE_STATUS.READ]: 3,
 };
 
-/**
- * Orchestration core. Encapsulates the "find-or-create" rules from the
- * spec (contact by phone, conversation per channel, open deal per
- * contact) plus the message persistence primitives. The webhook handlers
- * and outgoing-send controller all delegate here, so the business rules
- * live in exactly one place.
- *
- * Everything is injected in the constructor (defaults to the real
- * implementations) so tests can pass in-memory fakes and swap the
- * Bitrix24 service independently.
- */
 class ConversationService {
   constructor({
     prisma = prismaClient,
@@ -58,28 +43,13 @@ class ConversationService {
     this.bitrix24 = bitrix24;
   }
 
-  // ------------------------------------------------------------------
-  // Contacts
-  // ------------------------------------------------------------------
-
-  /**
-   * Find-or-create a Contact for a WhatsApp number.
-   *
-   * Rules (spec):
-   *   phone exists  -> touch last seen, reuse
-   *   else          -> search Bitrix24 by phone; if found, mirror it;
-   *                    otherwise create locally first (the message must
-   *                    never be dropped) and then sync to Bitrix24.
-   *
-   * Returns { contact, created, fromBitrix24 }.
-   */
-  async ensureContact({ phone, name = null, firstName = null, lastName = null, email = null, company = null, avatarUrl = null }) {
+  async ensureContact({ phone, name = null, firstName = null, lastName = null, email = null, company = null, avatarUrl = null, tenantId = null }) {
     const normalized = normalizePhone(phone);
     if (!normalized) {
       throw new AppError('Invalid phone number', 400, null, 'INVALID_PHONE');
     }
 
-    let contact = await this.contactRepo.findByWhatsappPhone(normalized);
+    let contact = await this.contactRepo.findByWhatsappPhone(normalized, tenantId);
     if (contact) {
       await this.contactRepo.touchLastActivity(contact.id, new Date());
       return { contact, created: false, fromBitrix24: false };
@@ -96,15 +66,23 @@ class ConversationService {
       });
     }
 
+    const baseData = {
+      whatsappPhone: normalized,
+      name: (b24Contact && b24Contact.NAME) || name,
+      firstName: (b24Contact && b24Contact.NAME) || firstName,
+      lastName: (b24Contact && b24Contact.LAST_NAME) || lastName,
+      email: (b24Contact && b24Contact.EMAIL && b24Contact.EMAIL[0] && b24Contact.EMAIL[0].VALUE) || email,
+      company: (b24Contact && b24Contact.COMPANY_TITLE) || company,
+      avatarUrl,
+    };
+    if (tenantId !== null && tenantId !== undefined) {
+      baseData.tenantId = Number(tenantId);
+    }
+
     if (b24Contact && b24Contact.ID) {
       const b24Id = Number(b24Contact.ID);
       contact = await this.contactRepo.create({
-        whatsappPhone: normalized,
-        name: b24Contact.NAME || name,
-        firstName: b24Contact.NAME || firstName,
-        lastName: b24Contact.LAST_NAME || lastName,
-        email: (b24Contact.EMAIL && b24Contact.EMAIL[0] && b24Contact.EMAIL[0].VALUE) || email,
-        company: b24Contact.COMPANY_TITLE || company,
+        ...baseData,
         bitrix24ContactId: b24Id,
         syncStatus: SYNC_STATUS.SYNCED,
       });
@@ -112,15 +90,8 @@ class ConversationService {
       return { contact, created: true, fromBitrix24: true };
     }
 
-    // Not in the CRM yet — persist locally, then try to sync upward.
     contact = await this.contactRepo.create({
-      whatsappPhone: normalized,
-      name: name || firstName,
-      firstName,
-      lastName,
-      email,
-      company,
-      avatarUrl,
+      ...baseData,
       syncStatus: SYNC_STATUS.PENDING,
     });
     await this.contactRepo.touchLastActivity(contact.id, new Date());
@@ -138,7 +109,7 @@ class ConversationService {
       await this.contactRepo.markSynced(contact.id, b24Id);
       contact = await this.contactRepo.findById(contact.id);
     } catch (err) {
-      log.warn('B24 contact creation failed; message stays local (retry job may sync later)', {
+      log.warn('B24 contact creation failed; message stays local', {
         contactId: contact.id,
         code: err.code,
         message: err.message,
@@ -149,21 +120,10 @@ class ConversationService {
     return { contact, created: true, fromBitrix24: false };
   }
 
-  // ------------------------------------------------------------------
-  // Conversations
-  // ------------------------------------------------------------------
-
-  /**
-   * Find-or-create the conversation for (contact, channel). One open
-   * chat per contact per WhatsApp number (unique composite key). The
-   * channel's provider (WHATSBOX/META) and the Meta phone number id are
-   * persisted so operator replies can be routed back over the same
-   * provider the customer used.
-   */
-  async ensureConversation({ contactId, channelNumber, provider = WEBHOOK_SOURCE.WHATSBOX, phoneNumberId = null }) {
+  async ensureConversation({ contactId, channelNumber, provider = WEBHOOK_SOURCE.WHATSBOX, phoneNumberId = null, tenantId = null }) {
     const channel = normalizePhone(channelNumber) || String(channelNumber);
 
-    let conversation = await this.conversationRepo.findByContactAndChannel(contactId, channel);
+    let conversation = await this.conversationRepo.findByContactAndChannel(contactId, channel, tenantId);
     if (conversation) {
       if (conversation.provider !== provider || (phoneNumberId && conversation.phoneNumberId !== phoneNumberId)) {
         conversation = await this.conversationRepo.update(conversation.id, { provider, phoneNumberId });
@@ -171,69 +131,55 @@ class ConversationService {
       return { conversation, created: false };
     }
 
-    conversation = await this.conversationRepo.create({
-      contactId,
+    const createPayload = {
+      contactId: Number(contactId),
       channelNumber: channel,
       provider,
       phoneNumberId,
       status: CONVERSATION_STATUS.OPEN,
       lastMessageAt: new Date(),
-    });
+    };
+    if (tenantId !== null && tenantId !== undefined) {
+      createPayload.tenantId = Number(tenantId);
+    }
+
+    conversation = await this.conversationRepo.create(createPayload);
     return { conversation, created: true };
   }
 
-  // ------------------------------------------------------------------
-  // Deals
-  // ------------------------------------------------------------------
-
-  /**
-   * Find-or-create an open deal for the contact's Bitrix24 record.
-   *
-   * Rules (spec):
-   *   conversation already linked to an open deal -> reuse it
-   *   contact has an open deal                     -> link + reuse
-   *   otherwise                                    -> create a deal
-   *
-   * Failures are non-fatal: the WhatsApp message must still be stored
-   * even if the CRM deal step fails. Returns { deal, created, skipped? }.
-   */
-  async ensureOpenDeal({ contact, conversation, firstMessageBody = null }) {
-    if (conversation.dealId) {
-      const existing = await this.bitrix24.getDeal(conversation.dealId).catch(() => null);
+  async ensureOpenLead({ contact, conversation, firstMessageBody = null }) {
+    if (conversation.leadId) {
+      const existing = await this.bitrix24.getLead(conversation.leadId).catch(() => null);
       if (existing && String(existing.CLOSED) !== 'Y') {
-        return { deal: existing, created: false };
+        return { lead: existing, created: false };
       }
-      log.info('linked deal is closed or missing; searching for another open deal', {
-        conversationId: conversation.id,
-        dealId: conversation.dealId,
-      });
     }
 
     if (!contact.bitrix24ContactId) {
-      return { deal: null, created: false, skipped: 'contact-not-synced' };
+      return { lead: null, created: false, skipped: 'contact-not-synced' };
     }
 
-    const openDeal = await this.bitrix24
-      .searchDealByContact(contact.bitrix24ContactId, { openOnly: true })
+    const openLead = await this.bitrix24
+      .searchLeadByContact(contact.bitrix24ContactId, { openOnly: true })
       .catch((err) => {
-        log.warn('open-deal search failed', { contactId: contact.id, code: err.code, message: err.message });
+        log.warn('open-lead search failed', { contactId: contact.id, code: err.code, message: err.message });
         return null;
       });
 
-    if (openDeal && openDeal.ID) {
-      const dealId = Number(openDeal.ID);
-      if (conversation.dealId !== dealId) {
-        await this.conversationRepo.update(conversation.id, { dealId });
-        conversation.dealId = dealId;
+    if (openLead && openLead.ID) {
+      const leadId = Number(openLead.ID);
+      if (conversation.leadId !== leadId) {
+        await this.conversationRepo.update(conversation.id, { leadId });
+        conversation.leadId = leadId;
       }
-      return { deal: openDeal, created: false };
+      return { lead: openLead, created: false };
     }
 
     try {
       const assignedById = await this._resolveAgentB24Id(conversation.assignedAgentId);
-      const dealId = Number(
-        await this.bitrix24.createDeal({
-          title: this._dealTitle(contact, conversation.channelNumber),
+      const leadId = Number(
+        await this.bitrix24.createLead({
+          title: this._leadTitle(contact, conversation.channelNumber),
           contactId: contact.bitrix24ContactId,
           assignedById,
           comments: firstMessageBody
@@ -241,17 +187,22 @@ class ConversationService {
             : undefined,
         })
       );
-      await this.conversationRepo.update(conversation.id, { dealId });
-      conversation.dealId = dealId;
-      return { deal: { ID: String(dealId) }, created: true };
+      await this.conversationRepo.update(conversation.id, { leadId });
+      conversation.leadId = leadId;
+      return { lead: { ID: String(leadId) }, created: true };
     } catch (err) {
-      log.error('deal creation failed; message still stored', {
+      log.error('lead creation failed; message still stored', {
         conversationId: conversation.id,
         code: err.code,
         message: err.message,
       });
-      return { deal: null, created: false, skipped: 'deal-create-failed' };
+      return { lead: null, created: false, skipped: 'lead-create-failed' };
     }
+  }
+
+  async syncAgent(b24User, tenantId = null) {
+    if (!b24User || (!b24User.ID && !b24User.id)) return null;
+    return this.agentRepo.upsertFromBitrix24(b24User, tenantId);
   }
 
   async _resolveAgentB24Id(agentId) {
@@ -260,25 +211,16 @@ class ConversationService {
     return agent ? agent.bitrix24UserId : undefined;
   }
 
-  _dealTitle(contact, channelNumber) {
+  _leadTitle(contact, channelNumber) {
     const fullName = [contact.firstName, contact.lastName].filter(Boolean).join(' ');
     const label = fullName || contact.name || `+${contact.whatsappPhone}`;
     return `WhatsApp — ${label}`.slice(0, 255);
   }
 
-  // ------------------------------------------------------------------
-  // Message persistence
-  // ------------------------------------------------------------------
-
-  /**
-   * Persists a message and updates the conversation snapshot + contact
-   * last-seen in one logical step. `incrementUnread` is derived from the
-   * direction (incoming only).
-   */
   async saveMessage({
     conversation,
     contact,
-    dealId = null,
+    leadId = null,
     direction,
     type,
     body = null,
@@ -294,14 +236,22 @@ class ConversationService {
     payload = null,
     timestamp = new Date(),
     status = MESSAGE_STATUS.PENDING,
+    tenantId = null,
   }) {
-    const message = await this.messageRepo.create({
+    const activeTenantId = tenantId !== null && tenantId !== undefined
+      ? tenantId
+      : (conversation && conversation.tenantId ? conversation.tenantId : null);
+
+    const activeLeadId = leadId !== null && leadId !== undefined
+      ? leadId
+      : (conversation ? conversation.leadId : null);
+
+    const createPayload = {
       conversationId: conversation.id,
       contactId: contact.id,
-      dealId: dealId ?? conversation.dealId ?? null,
+      leadId: activeLeadId,
       whatsboxMessageId,
       wamid,
-      payload,
       direction,
       type,
       body,
@@ -312,68 +262,78 @@ class ConversationService {
       mediaSize,
       locationData,
       contactCard,
+      payload,
       timestamp,
       status,
+    };
+    if (activeTenantId !== null && activeTenantId !== undefined) {
+      createPayload.tenantId = Number(activeTenantId);
+    }
+
+    const message = await this.messageRepo.create(createPayload);
+
+    await this.messageStatusRepo.create({
+      messageId: message.id,
+      status,
+      timestamp,
     });
 
-    const isIncoming = direction === MESSAGE_DIRECTION.INCOMING;
+    const preview = body || caption || mediaName || type;
     await this.conversationRepo.touchLastMessage(conversation.id, {
       direction,
       type,
-      preview: body || caption || mediaName || `[${type}]`,
+      preview,
       at: timestamp,
-      incrementUnread: isIncoming,
+      incrementUnread: direction === MESSAGE_DIRECTION.INCOMING,
     });
+
     await this.contactRepo.touchLastActivity(contact.id, timestamp);
 
     return message;
   }
 
-  /**
-   * Appends a status-history row and forwards the message state. State
-   * transitions are monotonic (PENDING < SENT < DELIVERED < READ); FAILED
-   * may replace any state. Stale/duplicate status events still get an
-   * audit row but do not move the message backwards.
-   */
+  async updateOutgoingMessageId({ id, whatsboxMessageId = null, wamid = null }) {
+    return this.messageRepo.update(id, {
+      ...(whatsboxMessageId && { whatsboxMessageId }),
+      ...(wamid && { wamid }),
+    });
+  }
+
   async recordMessageStatus({ messageId, status, providerStatus = null, error = null, raw = null, timestamp = new Date() }) {
-    const message = await this.messageRepo.findById(messageId);
-    if (!message) {
+    const existing = await this.messageRepo.findById(messageId);
+    if (!existing) {
+      log.warn('message status dropped: row not found', { messageId, status });
       throw new AppError('Message not found', 404, null, 'MESSAGE_NOT_FOUND');
+    }
+
+    const currentOrd = STATUS_ORDER[existing.status] ?? -1;
+    const targetOrd = STATUS_ORDER[status] ?? -1;
+
+    let shouldUpdateMain = false;
+    if (existing.status === MESSAGE_STATUS.READ || existing.status === MESSAGE_STATUS.DELIVERED) {
+      if (status === MESSAGE_STATUS.FAILED || targetOrd <= currentOrd) {
+        shouldUpdateMain = false;
+      }
+    } else if (status === MESSAGE_STATUS.FAILED || targetOrd > currentOrd) {
+      shouldUpdateMain = true;
+    }
+
+    if (shouldUpdateMain) {
+      const opts = { error };
+      if (status === MESSAGE_STATUS.SENT && !existing.sentAt) opts.sentAt = timestamp;
+      await this.messageRepo.updateStatus(messageId, status, opts);
     }
 
     await this.messageStatusRepo.create({
       messageId,
       status,
       providerStatus,
-      attempt: message.retryCount + 1,
       error,
       raw,
       timestamp,
     });
 
-    const currentRank = STATUS_ORDER[message.status] ?? -1;
-    const newRank = STATUS_ORDER[status];
-    const isFailure = status === MESSAGE_STATUS.FAILED;
-    // FAILED only applies while the message is still pending/sent; a
-    // message that was already delivered or read is terminal, so a late
-    // failure callback is logged but cannot regress the state.
-    const failureAllowed = isFailure && currentRank <= STATUS_ORDER[MESSAGE_STATUS.SENT];
-    const forward = newRank != null && newRank > currentRank;
-
-    if (failureAllowed || forward) {
-      return this.messageRepo.updateStatus(messageId, status, { error });
-    }
-    return message;
-  }
-
-  /** Backfills the provider/CRM message ids after a successful send. */
-  async updateOutgoingMessageId({ id, whatsboxMessageId = null, wamid = null }) {
-    return this.messageRepo.update(id, { whatsboxMessageId, wamid });
-  }
-
-  /** Mirrors a Bitrix24 user row into the local agents cache. */
-  async syncAgent(user) {
-    return this.agentRepo.upsertFromBitrix24(user);
+    return this.messageRepo.findById(messageId);
   }
 }
 

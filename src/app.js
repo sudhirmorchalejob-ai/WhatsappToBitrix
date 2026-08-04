@@ -1,3 +1,4 @@
+const path = require('path');
 const express = require('express');
 const helmet = require('helmet');
 const cors = require('cors');
@@ -14,19 +15,7 @@ const bitrix24AppRoutes = require('./routes/bitrix24App.route');
 const healthRoute = require('./routes/health.route');
 
 /**
- * Express application factory. Middleware order is intentional.
- *
- * NOTE: body parsing is per-mount. The /api mount uses express.json;
- * the /webhooks mount uses express.raw so webhook signatures can be
- * verified against the exact bytes received.
- *
- *  1. security headers (helmet)
- *  2. CORS
- *  3. request logging
- *  4. /api    -> json/urlencoded parsing -> rate limit -> routes
- *     /webhooks -> raw parsing -> webhook rate limit -> verification -> controller
- *  5. 404
- *  6. centralized error handler
+ * Express application factory.
  */
 function createApp() {
   const app = express();
@@ -34,7 +23,14 @@ function createApp() {
   if (env.TRUST_PROXY) app.set('trust proxy', 1);
 
   app.disable('x-powered-by');
-  app.use(helmet());
+  
+  // Configure Helmet allowing inline styles & Google Fonts for Dashboard UI
+  app.use(
+    helmet({
+      contentSecurityPolicy: false,
+    })
+  );
+
   app.use(
     cors({
       origin: env.CORS_ORIGIN === '*' ? true : env.CORS_ORIGIN.split(',').map((o) => o.trim()),
@@ -42,6 +38,9 @@ function createApp() {
   );
 
   app.use(requestLogger);
+
+  // Serve static public assets (Admin Dashboard UI)
+  app.use(express.static(path.join(__dirname, '../public')));
 
   app.use(
     '/api',
@@ -58,8 +57,7 @@ function createApp() {
   // Bitrix24 marketplace app lifecycle (public).
   app.use('/', bitrix24AppRoutes);
 
-  // Public /health (spec requires it at the root, in addition to
-  // /api/health for the API-key-protected surface).
+  // Public /health
   app.use('/health', healthRoute);
 
   app.use(notFound);

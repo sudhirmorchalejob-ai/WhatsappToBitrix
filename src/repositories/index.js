@@ -9,6 +9,9 @@ const { WebhookLogRepository } = require('./webhookLog.repository');
 const { InstallRepository } = require('./install.repository');
 const { TemplateRepository } = require('./template.repository');
 const { AutoReplyLogRepository } = require('./autoReplyLog.repository');
+const { TenantRepository } = require('./tenant.repository');
+const { UserRepository } = require('./user.repository');
+const { ActivityLogRepository } = require('./activityLog.repository');
 
 module.exports = {
   ContactRepository,
@@ -22,4 +25,7 @@ module.exports = {
   InstallRepository,
   TemplateRepository,
   AutoReplyLogRepository,
+  TenantRepository,
+  UserRepository,
+  ActivityLogRepository,
 };
