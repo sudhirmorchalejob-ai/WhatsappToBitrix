@@ -225,23 +225,34 @@ class Bitrix24ConnectorService {
     }
 
     const cleanChatId = String(chatId).trim();
+    const payload = {
+      CONNECTOR: portal.connectorId,
+      LINE: portal.lineId,
+      MESSAGES: [
+        {
+          user: { id: cleanChatId, name: contactName || '' },
+          message: {
+            id: String(messageId),
+            date: Math.floor(new Date(date).getTime() / 1000),
+            text: body || '',
+          },
+          chat: { id: cleanChatId, name: contactName || '' },
+        },
+      ],
+    };
 
     try {
-      const result = await this.bitrix24.callForMember(portal.memberId, BITRIX24_METHODS.IMCONNECTOR_SEND_MESSAGES, {
-        CONNECTOR: portal.connectorId,
-        LINE: portal.lineId,
-        MESSAGES: [
-          {
-            user: { id: cleanChatId, name: contactName || '' },
-            message: {
-              id: String(messageId),
-              date: Math.floor(new Date(date).getTime() / 1000),
-              text: body || '',
-            },
-            chat: { id: cleanChatId, name: contactName || '' },
-          },
-        ],
-      });
+      let result;
+      try {
+        result = await this.bitrix24.callForMember(portal.memberId, BITRIX24_METHODS.IMCONNECTOR_SEND_MESSAGES, payload);
+      } catch (firstErr) {
+        if (firstErr.code === 'WRONG_AUTH_TYPE' || firstErr.code === 'ERROR_METHOD_NOT_FOUND') {
+          log.info('imconnector call fallback to standard client', { error: firstErr.message });
+          result = await this.bitrix24.call(BITRIX24_METHODS.IMCONNECTOR_SEND_MESSAGES, payload);
+        } else {
+          throw firstErr;
+        }
+      }
 
       log.info('imconnector.send.messages call succeeded', {
         connectorId: portal.connectorId,
@@ -257,21 +268,9 @@ class Bitrix24ConnectorService {
         await this.activate(portal.memberId, { lineId: portal.lineId, active: true }).catch(() => {});
         await this.setData(portal.memberId, { lineId: portal.lineId }).catch(() => {});
 
-        const retryResult = await this.bitrix24.callForMember(portal.memberId, BITRIX24_METHODS.IMCONNECTOR_SEND_MESSAGES, {
-          CONNECTOR: portal.connectorId,
-          LINE: portal.lineId,
-          MESSAGES: [
-            {
-              user: { id: cleanChatId, name: contactName || '' },
-              message: {
-                id: String(messageId),
-                date: Math.floor(new Date(date).getTime() / 1000),
-                text: body || '',
-              },
-              chat: { id: cleanChatId, name: contactName || '' },
-            },
-          ],
-        });
+        const retryResult = await this.bitrix24.callForMember(portal.memberId, BITRIX24_METHODS.IMCONNECTOR_SEND_MESSAGES, payload).catch(() =>
+          this.bitrix24.call(BITRIX24_METHODS.IMCONNECTOR_SEND_MESSAGES, payload)
+        );
         return { sent: true, result: retryResult, lineId: portal.lineId, connectorId: portal.connectorId };
       }
       throw err;
