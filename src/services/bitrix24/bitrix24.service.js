@@ -250,8 +250,17 @@ class Bitrix24Service {
         const res = await client.call(BITRIX24_METHODS.EVENT_BIND, { event, handler });
         results.push({ event, ok: true, result: res && res.result });
       } catch (err) {
-        log.warn('event.bind failed', { memberId, event, code: err.code, message: err.message });
-        results.push({ event, ok: false, error: err.message });
+        const isAlreadyBound =
+          /already binded/i.test(err.message || '') ||
+          /already bound/i.test(err.message || '');
+
+        if (isAlreadyBound) {
+          log.info('event.bind handler already bound', { memberId, event });
+          results.push({ event, ok: true, alreadyBound: true, result: true });
+        } else {
+          log.warn('event.bind failed', { memberId, event, code: err.code, message: err.message });
+          results.push({ event, ok: false, error: err.message });
+        }
       }
     }
     return results;
