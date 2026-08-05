@@ -274,6 +274,18 @@ class Bitrix24Service {
     return res && res.result;
   }
 
+  async callForMember(memberId, method, params = {}, options) {
+    let client;
+    if (memberId) {
+      client = await this._ensureOAuthClient(memberId).catch(() => null);
+    }
+    if (!client) {
+      client = await this._ensureConfigured();
+    }
+    const res = await client.call(method, params, options);
+    return res && res.result;
+  }
+
   async batch(commands, options) {
     const client = await this._ensureConfigured();
     return client.batch(commands, options);

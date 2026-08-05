@@ -103,7 +103,7 @@ class Bitrix24ConnectorService {
     if (!lineId) throw new AppError('lineId is required to activate the connector', 400, null, 'B24_LINE_REQUIRED');
     const connectorId = this.connectorId();
     this._assertConnectorId(connectorId);
-    return this.bitrix24.call(BITRIX24_METHODS.IMCONNECTOR_ACTIVATE, {
+    return this.bitrix24.callForMember(memberId, BITRIX24_METHODS.IMCONNECTOR_ACTIVATE, {
       CONNECTOR: connectorId,
       LINE: lineId,
       ACTIVE: active ? '1' : '0',
@@ -119,7 +119,7 @@ class Bitrix24ConnectorService {
     if (!lineId) throw new AppError('lineId is required to set connector data', 400, null, 'B24_LINE_REQUIRED');
     const connectorId = this.connectorId();
     this._assertConnectorId(connectorId);
-    return this.bitrix24.call(BITRIX24_METHODS.IMCONNECTOR_CONNECTOR_DATA_SET, {
+    return this.bitrix24.callForMember(memberId, BITRIX24_METHODS.IMCONNECTOR_CONNECTOR_DATA_SET, {
       CONNECTOR: connectorId,
       LINE: lineId,
       DATA: {
@@ -227,7 +227,7 @@ class Bitrix24ConnectorService {
     const cleanChatId = String(chatId).trim();
 
     try {
-      const result = await this.bitrix24.call(BITRIX24_METHODS.IMCONNECTOR_SEND_MESSAGES, {
+      const result = await this.bitrix24.callForMember(portal.memberId, BITRIX24_METHODS.IMCONNECTOR_SEND_MESSAGES, {
         CONNECTOR: portal.connectorId,
         LINE: portal.lineId,
         MESSAGES: [
@@ -257,7 +257,7 @@ class Bitrix24ConnectorService {
         await this.activate(portal.memberId, { lineId: portal.lineId, active: true }).catch(() => {});
         await this.setData(portal.memberId, { lineId: portal.lineId }).catch(() => {});
 
-        const retryResult = await this.bitrix24.call(BITRIX24_METHODS.IMCONNECTOR_SEND_MESSAGES, {
+        const retryResult = await this.bitrix24.callForMember(portal.memberId, BITRIX24_METHODS.IMCONNECTOR_SEND_MESSAGES, {
           CONNECTOR: portal.connectorId,
           LINE: portal.lineId,
           MESSAGES: [
