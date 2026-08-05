@@ -2,7 +2,7 @@ const path = require('path');
 const express = require('express');
 const helmet = require('helmet');
 const cors = require('cors');
-const { env } = require('./config');
+const { env, isProduction } = require('./config');
 const requestLogger = require('./middlewares/requestLogger');
 const limiter = require('./middlewares/rateLimiter');
 const notFound = require('./middlewares/notFound');
@@ -20,7 +20,7 @@ const healthRoute = require('./routes/health.route');
 function createApp() {
   const app = express();
 
-  if (env.TRUST_PROXY) app.set('trust proxy', 1);
+  if (env.TRUST_PROXY || isProduction) app.set('trust proxy', 1);
 
   app.disable('x-powered-by');
   
