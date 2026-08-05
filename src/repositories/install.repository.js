@@ -18,6 +18,7 @@ class InstallRepository {
   }
 
   async upsert({
+    tenantId = null,
     memberId,
     domain,
     clientEndpoint = null,
@@ -32,37 +33,67 @@ class InstallRepository {
     expiresAt = null,
     lastSeenAt = new Date(),
   }) {
-    return this.prisma.install.upsert({
-      where: { memberId },
-      create: {
-        memberId,
-        domain,
-        clientEndpoint,
-        accessToken,
-        refreshToken,
-        applicationToken,
-        connectorId,
-        lineId,
-        userId,
-        scope,
-        status,
-        expiresAt,
-        lastSeenAt,
+    let resolvedTenantId = tenantId ? Number(tenantId) : null;
+    if (!resolvedTenantId && domain) {
+      const cleanDomain = String(domain).replace(/^https?:\/\//, '').replace(/\/+$/, '');
+      let tenant = await this.prisma.tenant.findFirst({
+        where: {
+          OR: [
+            { bitrix24WebhookUrl: { contains: cleanDomain } },
+            { name: { contains: cleanDomain } },
+          ],
+        },
+      });
+      if (!tenant) {
+        tenant = await this.prisma.tenant.findFirst({ orderBy: { id: 'asc' } });
+      }
+      if (!tenant) {
+        tenant = await this.prisma.tenant.create({
+          data: {
+            name: `Bitrix24 (${cleanDomain})`,
+            bitrix24WebhookUrl: `https://${cleanDomain}/rest/`,
+            isConfigured: true,
+          },
+        });
+      }
+      if (tenant) resolvedTenantId = tenant.id;
+    }
+
+    const payload = {
+      tenantId: resolvedTenantId,
+      memberId,
+      domain,
+      clientEndpoint,
+      accessToken,
+      refreshToken,
+      applicationToken,
+      connectorId,
+      lineId,
+      userId,
+      scope,
+      status,
+      expiresAt,
+      lastSeenAt,
+    };
+
+    const existing = await this.prisma.install.findFirst({
+      where: {
+        OR: [
+          { memberId },
+          ...(resolvedTenantId ? [{ tenantId: resolvedTenantId, memberId }] : []),
+        ],
       },
-      update: {
-        domain,
-        clientEndpoint,
-        accessToken,
-        refreshToken,
-        applicationToken,
-        connectorId,
-        lineId,
-        userId,
-        scope,
-        status,
-        expiresAt,
-        lastSeenAt,
-      },
+    });
+
+    if (existing) {
+      return this.prisma.install.update({
+        where: { id: existing.id },
+        data: payload,
+      });
+    }
+
+    return this.prisma.install.create({
+      data: payload,
     });
   }
 
@@ -87,6 +118,9 @@ class InstallRepository {
   }
 
   async updateTokens(memberId, { accessToken, refreshToken = null, expiresAt = null, domain = null, clientEndpoint = null, scope = null, status = null }) {
+    const existing = await this.findByMemberId(memberId);
+    if (!existing) return null;
+
     const data = {
       accessToken,
       updatedAt: new Date(),
@@ -97,7 +131,7 @@ class InstallRepository {
     if (clientEndpoint != null) data.clientEndpoint = clientEndpoint;
     if (scope != null) data.scope = scope;
     if (status != null) data.status = status;
-    return this.prisma.install.update({ where: { memberId }, data });
+    return this.prisma.install.update({ where: { id: existing.id }, data });
   }
 
   /**
@@ -105,36 +139,51 @@ class InstallRepository {
    * Used by the placement handler and auto-activation flow.
    */
   async updateOpenline(memberId, { connectorId = null, lineId = null }) {
+    const existing = await this.findByMemberId(memberId);
+    if (!existing) return null;
+
     const data = { updatedAt: new Date() };
     if (connectorId != null) data.connectorId = connectorId;
     if (lineId != null) data.lineId = lineId;
-    return this.prisma.install.update({ where: { memberId }, data });
+    return this.prisma.install.update({ where: { id: existing.id }, data });
   }
 
   async touch(memberId, at = new Date()) {
+    const existing = await this.findByMemberId(memberId);
+    if (!existing) return null;
+
     return this.prisma.install.update({
-      where: { memberId },
+      where: { id: existing.id },
       data: { lastSeenAt: at, updatedAt: at },
     });
   }
 
   async markUninstalled(memberId, at = new Date()) {
+    const existing = await this.findByMemberId(memberId);
+    if (!existing) return null;
+
     return this.prisma.install.update({
-      where: { memberId },
+      where: { id: existing.id },
       data: { status: INSTALL_STATUS.UNINSTALLED, lastSeenAt: at, updatedAt: at },
     });
   }
 
   async markDisabled(memberId, at = new Date()) {
+    const existing = await this.findByMemberId(memberId);
+    if (!existing) return null;
+
     return this.prisma.install.update({
-      where: { memberId },
+      where: { id: existing.id },
       data: { status: INSTALL_STATUS.DISABLED, lastSeenAt: at, updatedAt: at },
     });
   }
 
   async remove(memberId) {
+    const existing = await this.findByMemberId(memberId);
+    if (!existing) return;
+
     try {
-      await this.prisma.install.delete({ where: { memberId } });
+      await this.prisma.install.delete({ where: { id: existing.id } });
     } catch (err) {
       if (err.code !== 'P2025') throw err;
     }

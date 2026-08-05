@@ -340,7 +340,7 @@ model Setting {
 model Install {
   id               Int      @id @default(autoincrement())
   tenantId         Int?
-  memberId         String   @db.VarChar(64)
+  memberId         String   @unique @db.VarChar(64)
   domain           String   @db.VarChar(255)
   clientEndpoint   String?  @db.VarChar(500)
   accessToken      String   @db.VarChar(1024)
