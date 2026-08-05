@@ -20,6 +20,14 @@ class ConnectorLineMappingRepository {
     });
   }
 
+  async findActiveByMember(memberId) {
+    if (!memberId) return null;
+    return this.prisma.connectorLineMapping.findFirst({
+      where: { memberId: String(memberId), status: 'ACTIVE' },
+      orderBy: { updatedAt: 'desc' },
+    });
+  }
+
   async upsertMapping({ memberId, lineId, domain, connectorId = 'whatsapp_b24_connector', lineName = null, tenantId = null, status = 'ACTIVE' }) {
     if (!memberId || !lineId) return null;
 

@@ -49,7 +49,7 @@ class Bitrix24ConnectorService {
 
   _placementUrl() {
     const base = String(env.APP_BASE_URL || '').replace(/\/+$/, '');
-    return base ? `${base}/app/connector` : '';
+    return base ? `${base}/api/connector/handler` : '';
   }
 
   _webhookUrl() {
@@ -203,8 +203,8 @@ class Bitrix24ConnectorService {
       }
     }
 
-    // Default to line 5 (or configured line) if memberId exists
-    if (!lineId) lineId = 5;
+    // Default to line 1 (Standard Portal Open Line) if unconfigured
+    if (!lineId) lineId = 1;
     if (!memberId) memberId = '702773622d4c1bc40cb70b6ea16c6eef';
 
     return { memberId, connectorId, lineId };

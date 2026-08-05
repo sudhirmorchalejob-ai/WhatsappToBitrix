@@ -34,18 +34,15 @@ function isActive(value) {
  * install row and drives the connector lifecycle (activate + data.set +
  * event.bind) so operator replies can reach the Phase 4 webhook.
  */
-class ConnectorController {
-  constructor({
-    installRepo = new InstallRepository(),
-    bitrix24Service = new Bitrix24Service(),
-    connectorService = new Bitrix24ConnectorService(),
-  } = {}) {
-    this.installRepo = installRepo;
-    this.bitrix24 = bitrix24Service;
-    this.connector = connectorService;
-  }
+const { ConnectorModuleController } = require('./connectorModule.controller');
 
+const moduleController = new ConnectorModuleController();
+
+class ConnectorController {
   async handle(req, res) {
+    return moduleController.handlePlacement(req, res);
+  }
+}
     let state = { configured: false, error: null, lineId: null, active: false, registered: null };
 
     try {
