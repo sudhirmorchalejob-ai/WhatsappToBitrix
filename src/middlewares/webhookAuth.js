@@ -50,10 +50,7 @@ function verifyHmac(rawBody, signature, secret) {
 function webhookAuth(req, res, next) {
   const secret = env.WHATSBOX_WEBHOOK_SECRET;
 
-  if (!secret) {
-    if (env.NODE_ENV === 'production') {
-      return sendError(res, 'WHATSBOX_WEBHOOK_SECRET is not configured', 503);
-    }
+  if (!secret || String(secret).trim() === '') {
     req.webhookVerified = false;
     return next();
   }
