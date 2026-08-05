@@ -4,7 +4,7 @@ const { BITRIX24_METHODS, BITRIX24_EVENTS } = require('../../constants');
 const logger = require('../../utils/logger');
 const AppError = require('../../utils/AppError');
 const { normalizePhone, comparePhones } = require('../../helpers/phone');
-const { InstallRepository } = require('../../repositories');
+const { InstallRepository, TenantRepository } = require('../../repositories');
 const { Bitrix24Client } = require('./client');
 const { Bitrix24OAuth } = require('./oauth');
 
@@ -37,7 +37,9 @@ const updateContactSchema = z.object({
 
 const createLeadSchema = z.object({
   title: z.string().min(1).max(255),
-  contactId: idSchema,
+  contactId: idSchema.optional(),
+  name: z.string().max(255).optional(),
+  phone: phoneSchema.optional(),
   assignedById: idSchema.optional(),
   statusId: z.string().max(50).optional(),
   sourceId: z.string().max(50).optional(),
@@ -85,8 +87,9 @@ const uploadSchema = z.object({
 // ------------------------------------------------------------------
 
 class Bitrix24Service {
-  constructor({ installRepository = new InstallRepository(), oauth = null } = {}) {
+  constructor({ installRepository = new InstallRepository(), tenantRepository = new TenantRepository(), oauth = null } = {}) {
     this.installRepo = installRepository;
+    this.tenantRepo = tenantRepository;
     this.oauth = oauth || new Bitrix24OAuth({ installRepository });
     this.client = null;
     this.oauthCtx = null; // { memberId, expiresAtMs }
@@ -157,19 +160,46 @@ class Bitrix24Service {
     return this.client;
   }
 
-  async _ensureConfigured() {
+  async _ensureConfigured(tenantId = null) {
     const memberId = await this._resolveMemberId();
     if (memberId) {
       return this._ensureOAuthClient(memberId);
     }
+
+    let tenantB24Url = null;
+    try {
+      if (tenantId) {
+        const tenant = await this.tenantRepo.findById(tenantId);
+        if (tenant && tenant.bitrix24WebhookUrl) {
+          tenantB24Url = tenant.bitrix24WebhookUrl;
+        }
+      }
+      if (!tenantB24Url) {
+        const defaultTenant = await this.tenantRepo.prisma.tenant.findFirst({
+          where: { bitrix24WebhookUrl: { not: null } },
+          orderBy: { id: 'asc' },
+        });
+        if (defaultTenant && defaultTenant.bitrix24WebhookUrl) {
+          tenantB24Url = defaultTenant.bitrix24WebhookUrl;
+        }
+      }
+    } catch {
+      // Fall through to env fallback if DB check fails
+    }
+
+    if (tenantB24Url) {
+      return new Bitrix24Client(tenantB24Url);
+    }
+
     if (env.BITRIX24_WEBHOOK_URL) {
       if (!this.client) {
         this.client = new Bitrix24Client(env.BITRIX24_WEBHOOK_URL);
       }
       return this.client;
     }
+
     throw new AppError(
-      'Bitrix24 is not configured. Set BITRIX24_WEBHOOK_URL or install the marketplace app',
+      'Bitrix24 is not configured. Set BITRIX24_WEBHOOK_URL or configure webhook in Webhook Setup',
       503,
       null,
       'B24_NOT_CONFIGURED'
@@ -240,13 +270,24 @@ class Bitrix24Service {
     return client.batch(commands, options);
   }
 
-  async testConnection() {
-    const client = await this._ensureConfigured();
-    const res = await client.call(BITRIX24_METHODS.USER_GET, { limit: 1 });
-    return {
-      ok: true,
-      result: Array.isArray(res.result) ? res.result.length : 0,
-    };
+  async testConnection(tenantId = null) {
+    const client = await this._ensureConfigured(tenantId);
+    try {
+      const res = await client.call('crm.lead.fields', {});
+      return {
+        ok: true,
+        method: 'crm.lead.fields',
+        result: res && res.result ? Object.keys(res.result).length : 0,
+      };
+    } catch (crmErr) {
+      log.warn('crm.lead.fields test failed, fallback to user.get', { error: crmErr.message });
+      const res = await client.call(BITRIX24_METHODS.USER_GET, { limit: 1 });
+      return {
+        ok: true,
+        method: 'user.get',
+        result: Array.isArray(res && res.result) ? res.result.length : 0,
+      };
+    }
   }
 
   // ---------------- Contacts ----------------
@@ -256,8 +297,8 @@ class Bitrix24Service {
    * Uses B24's duplicate engine first (reliable dedup), then a list
    * filter fallback. Verifies the match by normalized phone.
    */
-  async searchContactByPhone(phone) {
-    const client = await this._ensureConfigured();
+  async searchContactByPhone(phone, tenantId = null) {
+    const client = await this._ensureConfigured(tenantId);
     const normalized = normalizePhone(phone);
     if (!normalized) return null;
 
@@ -289,7 +330,7 @@ class Bitrix24Service {
     }
 
     for (const id of contactIds.slice(0, 5)) {
-      const contact = await this.getContact(id);
+      const contact = await this.getContact(id, tenantId);
       if (!contact) continue;
 
       const phones = contact.PHONE || [];
@@ -301,13 +342,13 @@ class Bitrix24Service {
     return null;
   }
 
-  async getContact(id) {
-    const client = await this._ensureConfigured();
+  async getContact(id, tenantId = null) {
+    const client = await this._ensureConfigured(tenantId);
     const res = await client.call(BITRIX24_METHODS.CONTACT_GET, { id });
     return res.result || null;
   }
 
-  async createContact(input) {
+  async createContact(input, tenantId = null) {
     const { name, lastName, phone, email, company, comments, sourceId, assignId } =
       createContactSchema.parse(input);
 
@@ -322,14 +363,14 @@ class Bitrix24Service {
       ASSIGNED_BY_ID: assignId || undefined,
     };
 
-    const client = await this._ensureConfigured();
+    const client = await this._ensureConfigured(tenantId);
     const res = await client.call(BITRIX24_METHODS.CONTACT_ADD, { fields });
     return res.result;
   }
 
-  async updateContact(id, fields) {
+  async updateContact(id, fields, tenantId = null) {
     updateContactSchema.parse({ id, fields });
-    const client = await this._ensureConfigured();
+    const client = await this._ensureConfigured(tenantId);
     const res = await client.call(BITRIX24_METHODS.CONTACT_UPDATE, {
       id,
       fields,
@@ -343,8 +384,8 @@ class Bitrix24Service {
    * Returns the first open lead bound to a contact, newest first.
    * Pass openOnly=false to search all leads.
    */
-  async searchLeadByContact(contactId, { openOnly = true } = {}) {
-    const client = await this._ensureConfigured();
+  async searchLeadByContact(contactId, { openOnly = true } = {}, tenantId = null) {
+    const client = await this._ensureConfigured(tenantId);
     const filter = { CONTACT_ID: contactId };
     if (openOnly) filter.CLOSED = 'N';
 
@@ -358,19 +399,21 @@ class Bitrix24Service {
     return (res.result && res.result[0]) || null;
   }
 
-  async getLead(id) {
-    const client = await this._ensureConfigured();
+  async getLead(id, tenantId = null) {
+    const client = await this._ensureConfigured(tenantId);
     const res = await client.call(BITRIX24_METHODS.LEAD_GET, { id });
     return res.result || null;
   }
 
-  async createLead(input) {
-    const { title, contactId, assignedById, statusId, sourceId, comments, opportunity, currencyId } =
+  async createLead(input, tenantId = null) {
+    const { title, contactId, name, phone, assignedById, statusId, sourceId, comments, opportunity, currencyId } =
       createLeadSchema.parse(input);
 
     const fields = {
       TITLE: title,
-      CONTACT_ID: contactId,
+      CONTACT_ID: contactId || undefined,
+      NAME: name || undefined,
+      PHONE: phone ? [{ VALUE: phone, VALUE_TYPE: 'WORK' }] : undefined,
       ASSIGNED_BY_ID: assignedById || undefined,
       STATUS_ID: statusId || undefined,
       SOURCE_ID: sourceId || undefined,
@@ -380,7 +423,7 @@ class Bitrix24Service {
       OPENED: 'Y',
     };
 
-    const client = await this._ensureConfigured();
+    const client = await this._ensureConfigured(tenantId);
     const res = await client.call(BITRIX24_METHODS.LEAD_ADD, { fields });
     return res.result;
   }

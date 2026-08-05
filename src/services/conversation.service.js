@@ -11,6 +11,7 @@ const {
   MessageStatusRepository,
   ConversationAssignmentRepository,
   AgentRepository,
+  ActivityLogRepository,
 } = require('../repositories');
 
 const log = logger.childFor('conversation-service');
@@ -31,6 +32,7 @@ class ConversationService {
     messageStatusRepo = new MessageStatusRepository(prisma),
     assignmentRepo = new ConversationAssignmentRepository(prisma),
     agentRepo = new AgentRepository(prisma),
+    activityLogRepo = new ActivityLogRepository(prisma),
     bitrix24 = new Bitrix24Service(),
   } = {}) {
     this.prisma = prisma;
@@ -40,6 +42,7 @@ class ConversationService {
     this.messageStatusRepo = messageStatusRepo;
     this.assignmentRepo = assignmentRepo;
     this.agentRepo = agentRepo;
+    this.activityLogRepo = activityLogRepo;
     this.bitrix24 = bitrix24;
   }
 
@@ -57,7 +60,7 @@ class ConversationService {
 
     let b24Contact = null;
     try {
-      b24Contact = await this.bitrix24.searchContactByPhone(normalized);
+      b24Contact = await this.bitrix24.searchContactByPhone(normalized, tenantId);
     } catch (err) {
       log.warn('B24 contact search failed; will attempt local + create', {
         phone: normalized,
@@ -98,13 +101,16 @@ class ConversationService {
 
     try {
       const b24Id = Number(
-        await this.bitrix24.createContact({
-          name: name || firstName || `+${normalized}`,
-          lastName: lastName || undefined,
-          phone: normalized,
-          email: email || undefined,
-          company: company || undefined,
-        })
+        await this.bitrix24.createContact(
+          {
+            name: name || firstName || `+${normalized}`,
+            lastName: lastName || undefined,
+            phone: normalized,
+            email: email || undefined,
+            company: company || undefined,
+          },
+          tenantId
+        )
       );
       await this.contactRepo.markSynced(contact.id, b24Id);
       contact = await this.contactRepo.findById(contact.id);
@@ -147,45 +153,52 @@ class ConversationService {
     return { conversation, created: true };
   }
 
-  async ensureOpenLead({ contact, conversation, firstMessageBody = null }) {
+  async ensureOpenLead({ contact, conversation, firstMessageBody = null, tenantId = null }) {
+    const activeTenantId = tenantId !== null && tenantId !== undefined
+      ? tenantId
+      : (conversation ? conversation.tenantId : null);
+
     if (conversation.leadId) {
-      const existing = await this.bitrix24.getLead(conversation.leadId).catch(() => null);
+      const existing = await this.bitrix24.getLead(conversation.leadId, activeTenantId).catch(() => null);
       if (existing && String(existing.CLOSED) !== 'Y') {
         return { lead: existing, created: false };
       }
     }
 
-    if (!contact.bitrix24ContactId) {
-      return { lead: null, created: false, skipped: 'contact-not-synced' };
-    }
+    if (contact.bitrix24ContactId) {
+      const openLead = await this.bitrix24
+        .searchLeadByContact(contact.bitrix24ContactId, { openOnly: true }, activeTenantId)
+        .catch((err) => {
+          log.warn('open-lead search failed', { contactId: contact.id, code: err.code, message: err.message });
+          return null;
+        });
 
-    const openLead = await this.bitrix24
-      .searchLeadByContact(contact.bitrix24ContactId, { openOnly: true })
-      .catch((err) => {
-        log.warn('open-lead search failed', { contactId: contact.id, code: err.code, message: err.message });
-        return null;
-      });
-
-    if (openLead && openLead.ID) {
-      const leadId = Number(openLead.ID);
-      if (conversation.leadId !== leadId) {
-        await this.conversationRepo.update(conversation.id, { leadId });
-        conversation.leadId = leadId;
+      if (openLead && openLead.ID) {
+        const leadId = Number(openLead.ID);
+        if (conversation.leadId !== leadId) {
+          await this.conversationRepo.update(conversation.id, { leadId });
+          conversation.leadId = leadId;
+        }
+        return { lead: openLead, created: false };
       }
-      return { lead: openLead, created: false };
     }
 
     try {
       const assignedById = await this._resolveAgentB24Id(conversation.assignedAgentId);
       const leadId = Number(
-        await this.bitrix24.createLead({
-          title: this._leadTitle(contact, conversation.channelNumber),
-          contactId: contact.bitrix24ContactId,
-          assignedById,
-          comments: firstMessageBody
-            ? `First WhatsApp message: ${String(firstMessageBody).slice(0, 900)}`
-            : undefined,
-        })
+        await this.bitrix24.createLead(
+          {
+            title: this._leadTitle(contact, conversation.channelNumber),
+            contactId: contact.bitrix24ContactId || undefined,
+            name: contact.name || contact.firstName || undefined,
+            phone: contact.whatsappPhone,
+            assignedById,
+            comments: firstMessageBody
+              ? `First WhatsApp message: ${String(firstMessageBody).slice(0, 900)}`
+              : undefined,
+          },
+          activeTenantId
+        )
       );
       await this.conversationRepo.update(conversation.id, { leadId });
       conversation.leadId = leadId;
@@ -195,8 +208,30 @@ class ConversationService {
         conversationId: conversation.id,
         code: err.code,
         message: err.message,
+        details: err.data || null,
       });
-      return { lead: null, created: false, skipped: 'lead-create-failed' };
+
+      if (this.activityLogRepo) {
+        try {
+          await this.activityLogRepo.log({
+            tenantId: activeTenantId,
+            action: 'LEAD_CREATE_FAILED',
+            category: 'CRM',
+            details: {
+              conversationId: conversation.id,
+              contactId: contact.id,
+              phone: contact.whatsappPhone,
+              error: err.message,
+              code: err.code || 'B24_ERROR',
+              details: err.data || null,
+            },
+          });
+        } catch (logErr) {
+          log.warn('failed to log lead creation failure activity', { error: logErr.message });
+        }
+      }
+
+      return { lead: null, created: false, skipped: 'lead-create-failed', error: err.message };
     }
   }
 
