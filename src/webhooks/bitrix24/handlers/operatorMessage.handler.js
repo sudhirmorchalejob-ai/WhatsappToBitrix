@@ -210,13 +210,27 @@ class OperatorMessageHandler {
   async _findConversation(canonical) {
     if (!canonical || !canonical.externalChatId) return null;
 
-    const byExt = await this.conversationRepo.findByExternalChatId(canonical.externalChatId);
+    const rawId = String(canonical.externalChatId);
+
+    // 1. Match exact externalChatId stored on conversation
+    const byExt = await this.conversationRepo.findByExternalChatId(rawId);
     if (byExt) return byExt;
 
-    const match = String(canonical.externalChatId).match(/^(?:wa_)?(\d+)$/i);
+    // 2. Match conversation ID (e.g. "conv_19" or "19")
+    const match = rawId.match(/^(?:conv_)?(\d+)$/i);
     if (match) {
       const byId = await this.conversationRepo.findById(Number(match[1]));
       if (byId) return byId;
+    }
+
+    // 3. Match WhatsApp phone number (e.g. "wa_9988776655" or "9988776655")
+    const digits = rawId.replace(/\D/g, '');
+    if (digits && digits.length >= 7) {
+      const contact = await this.service.contactRepo.findByWhatsappPhone(digits);
+      if (contact) {
+        const convs = await this.conversationRepo.findByContactId(contact.id);
+        if (convs && convs.length) return convs[0];
+      }
     }
 
     return null;

@@ -9,28 +9,22 @@ const {
 } = require('../../../repositories');
 
 const { CustomerResolverService } = require('../../../services/customerResolver.service');
+const { Bitrix24ConnectorService } = require('../../../services/bitrix24');
 
 const log = logger.childFor('webhook-incoming');
 
 /**
  * Incoming WhatsApp message handler.
  *
- * Simplified flow:
- *   webhook -> dedup -> resolve contact & create Bitrix24 lead
- *   -> reopen closed chat -> save message -> auto-reply
- *
- * Only these 3 things trigger Bitrix24 lead creation:
- *   1. Customer sends a WhatsApp message (this handler)
- *   2. Campaign outbound message (OutgoingMessageService)
- *   3. Auto-reply (AutoReplyService -> OutgoingMessageService -> ensureOpenLead)
- *
- * No Open Channels forwarding, no CRM timeline comments,
- * no operator routing, no agent push notifications.
+ * Flow:
+ *   webhook -> dedup -> resolve contact & create/reuse Bitrix24 lead
+ *   -> reopen closed chat -> save message -> forward to Bitrix24 Open Channels -> auto-reply
  */
 class IncomingMessageHandler {
   constructor({
     customerResolverService = null,
     conversationService = new ConversationService(),
+    connectorService = new Bitrix24ConnectorService(),
     messageRepo = new MessageRepository(),
     conversationRepo = new ConversationRepository(),
     activityLogRepo = null,
@@ -43,6 +37,7 @@ class IncomingMessageHandler {
     // that the caller provided.
     this.customerResolverService =
       customerResolverService || new CustomerResolverService({ conversationService });
+    this.connectorService = connectorService;
     this.messageRepo = messageRepo;
     this.conversationRepo = conversationRepo;
     this.activityLogRepo = activityLogRepo;
@@ -144,6 +139,28 @@ class IncomingMessageHandler {
       timestamp: canonical.timestamp,
       status: MESSAGE_STATUS.SENT,
     });
+
+    // Step 3.5: Forward customer WhatsApp message to Bitrix24 Open Channels (imconnector.send.messages)
+    if (this.connectorService) {
+      try {
+        const chatId = contact.whatsappPhone ? `wa_${contact.whatsappPhone}` : `conv_${conversation.id}`;
+        const contactName = contact.name || contact.firstName || (contact.whatsappPhone ? `+${contact.whatsappPhone}` : 'WhatsApp Customer');
+        const openlineRes = await this.connectorService.sendCustomerMessage({
+          chatId,
+          contactName,
+          messageId: canonical.messageId || `msg_${message.id}`,
+          body: canonical.body || canonical.caption || '',
+          date: canonical.timestamp ? new Date(canonical.timestamp * 1000) : new Date(),
+        });
+        log.info('forwarded incoming message to Bitrix24 Open Channels', { chatId, openlineRes });
+      } catch (err) {
+        log.error('failed to forward incoming message to Bitrix24 Open Channels', {
+          error: err.message,
+          code: err.code,
+          contactId: contact.id,
+        });
+      }
+    }
 
     // Step 4: Auto-reply (if enabled in settings). Auto-reply also calls
     // ensureOpenLead internally via OutgoingMessageService, so the same
