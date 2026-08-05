@@ -59,7 +59,7 @@ class DashboardService {
         take: 10,
         orderBy: { createdAt: 'desc' },
       }),
-      this.tenantService.testConnection(tId),
+      this.tenantService.testConnection(tId).catch((err) => ({ ok: false, error: err.message })),
     ]);
 
     // Count WhatsApp-originated contacts synced to Bitrix as Total Leads

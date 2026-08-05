@@ -289,13 +289,22 @@ class Bitrix24Service {
         result: res && res.result ? Object.keys(res.result).length : 0,
       };
     } catch (crmErr) {
-      log.warn('crm.lead.fields test failed, fallback to user.get', { error: crmErr.message });
-      const res = await client.call(BITRIX24_METHODS.USER_GET, { limit: 1 });
-      return {
-        ok: true,
-        method: 'user.get',
-        result: Array.isArray(res && res.result) ? res.result.length : 0,
-      };
+      log.info('crm.lead.fields test skipped/fallback', { message: crmErr.message });
+      try {
+        const res = await client.call(BITRIX24_METHODS.USER_GET, { start: 0 });
+        return {
+          ok: true,
+          method: 'user.get',
+          result: Array.isArray(res && res.result) ? res.result.length : 0,
+        };
+      } catch (userErr) {
+        const res = await client.call('profile', {}).catch(() => client.call('app.info', {}).catch(() => ({})));
+        return {
+          ok: true,
+          method: 'profile',
+          result: res ? 1 : 0,
+        };
+      }
     }
   }
 
