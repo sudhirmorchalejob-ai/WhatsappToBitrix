@@ -112,6 +112,7 @@ model Tenant {
   autoReplyLogs         AutoReplyLog[]
   activityLogs          ActivityLog[]
   campaigns             Campaign[]
+  connectorLineMappings ConnectorLineMapping[]
 
   @@map("tenants")
 }
@@ -467,4 +468,22 @@ model AutoReplyLog {
   @@index([contactId, createdAt])
   @@index([conversationId])
   @@map("auto_reply_logs")
+}
+
+model ConnectorLineMapping {
+  id               Int      @id @default(autoincrement())
+  tenantId         Int?
+  memberId         String   @db.VarChar(64)
+  domain           String   @db.VarChar(255)
+  connectorId      String   @default("whatsapp_b24_connector") @db.VarChar(64)
+  lineId           Int
+  lineName         String?  @db.VarChar(255)
+  status           String   @default("ACTIVE") @db.VarChar(20)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  tenant           Tenant?  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([memberId])
+  @@map("connector_line_mappings")
 }

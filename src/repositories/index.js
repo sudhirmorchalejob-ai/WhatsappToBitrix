@@ -12,6 +12,7 @@ const { AutoReplyLogRepository } = require('./autoReplyLog.repository');
 const { TenantRepository } = require('./tenant.repository');
 const { UserRepository } = require('./user.repository');
 const { ActivityLogRepository } = require('./activityLog.repository');
+const { ConnectorLineMappingRepository } = require('./connectorLineMapping.repository');
 
 module.exports = {
   ContactRepository,
@@ -28,4 +29,5 @@ module.exports = {
   TenantRepository,
   UserRepository,
   ActivityLogRepository,
+  ConnectorLineMappingRepository,
 };

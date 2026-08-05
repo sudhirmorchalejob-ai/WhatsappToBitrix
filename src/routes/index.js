@@ -13,10 +13,15 @@ const adminRoute = require('./admin.route');
 const agentRoute = require('./agent.route');
 const templateRoute = require('./template.route');
 
+const connectorRoute = require('./connector.route');
+
 const router = Router();
 
 // Health check is public
 router.use('/health', healthRoute);
+
+// Public Open Lines connector endpoints (Bitrix24 iframe & OAuth callbacks)
+router.use('/connector', connectorRoute);
 
 // Auth endpoints (login, me, logout)
 router.use('/auth', authRoute);

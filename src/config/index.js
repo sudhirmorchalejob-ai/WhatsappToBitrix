@@ -93,6 +93,12 @@ const envSchema = z.object({
     .enum(['true', 'false'])
     .default('true')
     .transform((v) => v === 'true'),
+
+  // Open Lines Connector Module feature flag (default: false)
+  ENABLE_OPENLINES_CONNECTOR: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((v) => v === 'true'),
 });
 
 const parsed = envSchema.safeParse(process.env);
