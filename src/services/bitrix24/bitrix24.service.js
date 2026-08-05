@@ -161,11 +161,6 @@ class Bitrix24Service {
   }
 
   async _ensureConfigured(tenantId = null) {
-    const memberId = await this._resolveMemberId();
-    if (memberId) {
-      return this._ensureOAuthClient(memberId);
-    }
-
     let tenantB24Url = null;
     try {
       if (tenantId) {
@@ -184,7 +179,7 @@ class Bitrix24Service {
         }
       }
     } catch {
-      // Fall through to env fallback if DB check fails
+      // Fall through to env / OAuth fallback if DB check fails
     }
 
     if (tenantB24Url) {
@@ -196,6 +191,11 @@ class Bitrix24Service {
         this.client = new Bitrix24Client(env.BITRIX24_WEBHOOK_URL);
       }
       return this.client;
+    }
+
+    const memberId = await this._resolveMemberId();
+    if (memberId) {
+      return this._ensureOAuthClient(memberId);
     }
 
     throw new AppError(
@@ -234,32 +234,32 @@ class Bitrix24Service {
    */
   async bindEvents(memberId, handlers = []) {
     const client = await this._ensureOAuthClient(memberId);
-    const defaults = [
-      {
-        event: BITRIX24_EVENTS.APP_UNINSTALL,
-        handler: env.APP_BASE_URL ? `${env.APP_BASE_URL.replace(/\/+$/, '')}/uninstall` : '',
-      },
+    const allHandlers = [
+      { event: BITRIX24_METHODS.ONAPPUNINSTALL, handler: this._webhookUrl() },
+      ...handlers,
     ];
+
     const results = [];
-    for (const { event, handler } of [...defaults, ...handlers]) {
-      if (!handler) {
-        results.push({ event, ok: false, error: 'no handler URL configured (APP_BASE_URL)' });
-        continue;
-      }
+    for (const item of allHandlers) {
+      if (!item.handler) continue;
       try {
-        const res = await client.call(BITRIX24_METHODS.EVENT_BIND, { event, handler });
-        results.push({ event, ok: true, result: res && res.result });
+        const res = await client.call('event.bind', {
+          event: item.event,
+          handler: item.handler,
+          auth_type: 0,
+        });
+        results.push({ event: item.event, ok: true, result: res.result });
       } catch (err) {
         const isAlreadyBound =
-          /already binded/i.test(err.message || '') ||
-          /already bound/i.test(err.message || '');
+          err.code === 'ERROR_CORE' &&
+          (/already binded/i.test(err.message || '') || /already bound/i.test(err.message || ''));
 
         if (isAlreadyBound) {
-          log.info('event.bind handler already bound', { memberId, event });
-          results.push({ event, ok: true, alreadyBound: true, result: true });
+          log.info('event.bind handler already bound', { memberId, event: item.event });
+          results.push({ event: item.event, ok: true, alreadyBound: true, result: true });
         } else {
-          log.warn('event.bind failed', { memberId, event, code: err.code, message: err.message });
-          results.push({ event, ok: false, error: err.message });
+          log.warn('event.bind failed', { memberId, event: item.event, error: err.message });
+          results.push({ event: item.event, ok: false, error: err.message });
         }
       }
     }
@@ -298,11 +298,11 @@ class Bitrix24Service {
           result: Array.isArray(res && res.result) ? res.result.length : 0,
         };
       } catch (userErr) {
-        const res = await client.call('profile', {}).catch(() => client.call('app.info', {}).catch(() => ({})));
+        const res = await client.call('scope', {}).catch(() => client.call('app.info', {}).catch(() => ({})));
         return {
           ok: true,
-          method: 'profile',
-          result: res ? 1 : 0,
+          method: 'scope',
+          result: res && res.result ? (Array.isArray(res.result) ? res.result.length : 1) : 0,
         };
       }
     }
