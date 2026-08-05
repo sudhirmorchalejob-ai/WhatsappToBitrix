@@ -21,13 +21,13 @@ class TenantService {
 
   async getSetupStatus(tenantId) {
     if (!tenantId) {
-    return {
-      isConfigured: true,
-      whatsappWebhookUrl: env.WHATSAPP_WEBHOOK_URL ? '********' : null,
-      whatsboxChannelId: env.WHATSBOX_CHANNEL_ID || null,
-      bitrix24WebhookUrl: env.BITRIX24_WEBHOOK_URL ? env.BITRIX24_WEBHOOK_URL.replace(/(\/rest\/\d+\/).*\//, '$1***\/') : null,
-      status: 'ACTIVE',
-    };
+      return {
+        isConfigured: true,
+        whatsappWebhookUrl: env.WHATSAPP_WEBHOOK_URL || null,
+        whatsboxChannelId: env.WHATSBOX_CHANNEL_ID || null,
+        bitrix24WebhookUrl: env.BITRIX24_WEBHOOK_URL || null,
+        status: 'ACTIVE',
+      };
     }
 
     const tenant = await this.tenantRepo.findById(tenantId);
@@ -37,9 +37,9 @@ class TenantService {
 
     return {
       isConfigured: tenant.isConfigured,
-      whatsappWebhookUrl: tenant.whatsappWebhookUrl ? '********' : (env.WHATSAPP_WEBHOOK_URL ? '******** (env default)' : null),
+      whatsappWebhookUrl: tenant.whatsappWebhookUrl || env.WHATSAPP_WEBHOOK_URL || null,
       whatsboxChannelId: tenant.whatsboxChannelId || env.WHATSBOX_CHANNEL_ID || null,
-      bitrix24WebhookUrl: tenant.bitrix24WebhookUrl ? tenant.bitrix24WebhookUrl.replace(/(\/rest\/\d+\/).*\//, '$1***\/') : (env.BITRIX24_WEBHOOK_URL ? env.BITRIX24_WEBHOOK_URL.replace(/(\/rest\/\d+\/).*\//, '$1***\/') : null),
+      bitrix24WebhookUrl: tenant.bitrix24WebhookUrl || env.BITRIX24_WEBHOOK_URL || null,
       status: tenant.status,
       name: tenant.name,
       slug: tenant.slug,

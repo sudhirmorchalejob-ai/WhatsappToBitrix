@@ -1,7 +1,7 @@
 const { z } = require('zod');
 const { sendError } = require('../utils/ApiResponse');
 
-const MAX_LIMIT = 100;
+const MAX_LIMIT = 1000;
 
 /**
  * Shared pagination fields. `coerce` is essential for query strings:

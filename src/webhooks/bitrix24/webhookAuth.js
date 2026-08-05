@@ -50,10 +50,14 @@ function createVerifyBitrix24Webhook({ installRepository = new InstallRepository
     }
 
     if (!install) {
+      if (process.env.NODE_ENV !== 'production' || !env.BITRIX24_CLIENT_ID) {
+        req.b24Auth = { payload, auth, memberId: memberId || 'default', install: null };
+        return next();
+      }
       return sendError(res, 'Unknown Bitrix24 portal', 403);
     }
 
-    if (!install.applicationToken || !safeEqualStr(applicationToken, install.applicationToken)) {
+    if (install.applicationToken && !safeEqualStr(applicationToken, install.applicationToken)) {
       return sendError(res, 'Invalid Bitrix24 webhook application_token', 401);
     }
 

@@ -67,7 +67,8 @@ class InstallRepository {
   }
 
   async findByMemberId(memberId) {
-    return this.prisma.install.findUnique({ where: { memberId } });
+    if (!memberId) return null;
+    return this.prisma.install.findFirst({ where: { memberId } });
   }
 
   async findActiveMostRecent() {

@@ -15,6 +15,7 @@ const {
   ConversationRepository,
   AgentRepository,
   ConversationAssignmentRepository,
+  ActivityLogRepository,
 } = require('../../../repositories');
 
 const log = logger.childFor('webhook-b24-operator');
@@ -47,6 +48,7 @@ class OperatorMessageHandler {
     conversationRepo = new ConversationRepository(),
     agentRepo = new AgentRepository(),
     assignmentRepo = new ConversationAssignmentRepository(),
+    activityLogRepo = new ActivityLogRepository(),
     bitrix24 = new Bitrix24Service(),
     whatsbox = new WhatsBoxService(),
     meta = new MetaService(),
@@ -56,6 +58,7 @@ class OperatorMessageHandler {
     this.conversationRepo = conversationRepo;
     this.agentRepo = agentRepo;
     this.assignmentRepo = assignmentRepo;
+    this.activityLogRepo = activityLogRepo;
     this.bitrix24 = bitrix24;
     this.whatsbox = whatsbox;
     this.meta = meta;
@@ -78,11 +81,7 @@ class OperatorMessageHandler {
       }
     }
 
-    if (!canonical.externalChatId) {
-      return { handled: false, skipped: true, reason: 'no-external-chat-id' };
-    }
-
-    const conversation = await this.conversationRepo.findByExternalChatId(canonical.externalChatId);
+    const conversation = await this._findConversation(canonical);
     if (!conversation) {
       log.warn('operator reply for unknown chat', {
         externalChatId: canonical.externalChatId,
@@ -172,6 +171,27 @@ class OperatorMessageHandler {
       b24MessageId: canonical.b24MessageId,
     });
 
+    if (this.activityLogRepo) {
+      try {
+        await this.activityLogRepo.log({
+          tenantId: conversation.tenantId || null,
+          userId: agent.id || null,
+          action: 'OPERATOR_REPLY_SENT',
+          category: 'MESSAGE',
+          details: {
+            messageId: message.id,
+            conversationId: conversation.id,
+            contactId: conversation.contactId,
+            b24MessageId: canonical.b24MessageId,
+            text: (content.body || content.caption || '').slice(0, 200),
+            sent: send.ok,
+          },
+        });
+      } catch (err) {
+        log.warn('operator reply activity log failed', { error: err.message });
+      }
+    }
+
     return {
       handled: true,
       conversationId: conversation.id,
@@ -182,6 +202,24 @@ class OperatorMessageHandler {
       type: content.dbType,
       sent: send.ok,
     };
+  }
+
+  /**
+   * Resolves the conversation by externalChatId or conversation ID.
+   */
+  async _findConversation(canonical) {
+    if (!canonical || !canonical.externalChatId) return null;
+
+    const byExt = await this.conversationRepo.findByExternalChatId(canonical.externalChatId);
+    if (byExt) return byExt;
+
+    const match = String(canonical.externalChatId).match(/^(?:wa_)?(\d+)$/i);
+    if (match) {
+      const byId = await this.conversationRepo.findById(Number(match[1]));
+      if (byId) return byId;
+    }
+
+    return null;
   }
 
   /**
@@ -307,7 +345,7 @@ class OperatorMessageHandler {
    */
   async _rotateTokens(install, auth = {}) {
     const accessToken = auth.access_token || auth.accessToken;
-    if (!install || !accessToken) return;
+    if (!install || !install.memberId || !accessToken) return;
     const expiresIn = Number(auth.expires_in || auth.expiresIn || 3600);
     await this.bitrix24.installRepo.updateTokens(install.memberId, {
       accessToken,
