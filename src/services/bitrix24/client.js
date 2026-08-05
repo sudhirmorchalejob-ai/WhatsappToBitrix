@@ -166,12 +166,23 @@ class Bitrix24Client {
         lastError = normalized;
 
         if (attempt >= retries || !isTransient(normalized)) {
-          log.error(`[fail] ${method}`, {
-            code: normalized.code,
-            message: normalized.message,
-            durationMs: Date.now() - startedAt,
-            attempt: attempt + 1,
-          });
+          const isAlreadyBound =
+            /already binded/i.test(normalized.message || '') ||
+            /already bound/i.test(normalized.message || '');
+
+          if (isAlreadyBound) {
+            log.info(`[already-bound] ${method}`, {
+              code: normalized.code,
+              message: normalized.message,
+            });
+          } else {
+            log.error(`[fail] ${method}`, {
+              code: normalized.code,
+              message: normalized.message,
+              durationMs: Date.now() - startedAt,
+              attempt: attempt + 1,
+            });
+          }
           throw normalized;
         }
 
