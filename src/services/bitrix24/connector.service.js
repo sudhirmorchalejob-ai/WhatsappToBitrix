@@ -2,7 +2,7 @@ const { env } = require('../../config');
 const AppError = require('../../utils/AppError');
 const logger = require('../../utils/logger');
 const { BITRIX24_METHODS, BITRIX24_EVENTS } = require('../../constants');
-const { InstallRepository } = require('../../repositories');
+const { InstallRepository, ConnectorLineMappingRepository } = require('../../repositories');
 const { Bitrix24Service } = require('./bitrix24.service');
 
 const prismaClient = require('../../database/prisma');
@@ -25,10 +25,12 @@ class Bitrix24ConnectorService {
   constructor({
     prisma = prismaClient,
     installRepository = new InstallRepository(prisma),
+    mappingRepository = new ConnectorLineMappingRepository(prisma),
     bitrix24 = new Bitrix24Service(),
   } = {}) {
     this.prisma = prisma;
     this.installRepo = installRepository;
+    this.mappingRepo = mappingRepository;
     this.bitrix24 = bitrix24;
   }
 
@@ -194,11 +196,8 @@ class Bitrix24ConnectorService {
         if (install.connectorId) connectorId = install.connectorId;
       }
 
-      if (!lineId) {
-        const mapping = await this.prisma.connectorLineMapping.findFirst({
-          where: { memberId: String(memberId), status: 'ACTIVE' },
-          orderBy: { updatedAt: 'desc' },
-        }).catch(() => null);
+      if (!lineId && this.mappingRepo) {
+        const mapping = await this.mappingRepo.findActiveByMember(memberId).catch(() => null);
         if (mapping) lineId = mapping.lineId;
       }
     }
