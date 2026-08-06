@@ -125,7 +125,7 @@ class DiagnosticsService {
   _providerStatus() {
     return {
       whatsbox: {
-        configured: Boolean(env.WHATSBOX_API_URL && env.WHATSBOX_API_KEY),
+        configured: Boolean(env.WHATSBOX_API_URL),
         channelConfigured: Boolean(env.WHATSBOX_CHANNEL_ID),
       },
       bitrix24: {

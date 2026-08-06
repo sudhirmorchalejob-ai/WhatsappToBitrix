@@ -46,9 +46,9 @@ class WhatsBoxService {
   }
 
   _ensureConfigured() {
-    if (!env.WHATSBOX_API_URL || !env.WHATSBOX_API_KEY) {
+    if (!env.WHATSBOX_API_URL) {
       throw new AppError(
-        'WHATSBOX_API_URL / WHATSBOX_API_KEY is not configured',
+        'WHATSBOX_API_URL is not configured',
         503,
         null,
         'WHATSBOX_NOT_CONFIGURED'
@@ -57,10 +57,15 @@ class WhatsBoxService {
     if (!this.client) {
       this.client = new WhatsBoxClient({
         baseURL: env.WHATSBOX_API_URL,
-        apiKey: env.WHATSBOX_API_KEY,
+        apiKey: env.WHATSBOX_API_KEY || undefined,
       });
     }
     return this.client;
+  }
+
+  _sendPath(kind) {
+    if (!env.WHATSBOX_API_KEY) return '';
+    return kind === 'text' ? 'messages/text' : 'messages/media';
   }
 
   _defaultChannelId() {
@@ -82,7 +87,7 @@ class WhatsBoxService {
       preview_url: previewUrl,
     };
 
-    const data = await this._ensureConfigured().post('messages/text', payload);
+    const data = await this._ensureConfigured().post(this._sendPath('text'), payload);
     return this._extractResult(data);
   }
 
@@ -123,7 +128,7 @@ class WhatsBoxService {
       filename,
     };
 
-    const data = await this._ensureConfigured().post('messages/media', payload);
+    const data = await this._ensureConfigured().post(this._sendPath('media'), payload);
     return this._extractResult(data);
   }
 

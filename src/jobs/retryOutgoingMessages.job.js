@@ -79,7 +79,7 @@ class RetryOutgoingMessagesJob {
   async run({ limit = 50, maxRetries = this.maxRetries, olderThanMinutes = 2 } = {}) {
     if (this.running) return { scanned: 0, skipped: true, reason: 'already-running' };
     // Never burn retry budget while every provider is simply unconfigured.
-    const anyProviderConfigured = (env.WHATSBOX_API_URL && env.WHATSBOX_API_KEY) ||
+    const anyProviderConfigured = Boolean(env.WHATSBOX_API_URL) ||
       (env.META_ACCESS_TOKEN && env.META_PHONE_NUMBER_ID);
     if (!anyProviderConfigured) {
       return { scanned: 0, skipped: true, reason: 'no-provider-configured' };

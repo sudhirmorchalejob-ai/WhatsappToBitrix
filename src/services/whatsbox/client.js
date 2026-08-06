@@ -41,18 +41,19 @@ class WhatsBoxClient {
     if (!baseURL) {
       throw new WhatsBoxApiError('WHATSBOX_API_URL is not configured', 'NOT_CONFIGURED', 503);
     }
-    if (!apiKey) {
-      throw new WhatsBoxApiError('WHATSBOX_API_KEY is not configured', 'NOT_CONFIGURED', 503);
+
+    const headers = {
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+    };
+    if (apiKey) {
+      headers['x-api-key'] = apiKey;
     }
 
     this.http = axios.create({
       baseURL,
       timeout: REQUEST_TIMEOUT_MS,
-      headers: {
-        'x-api-key': apiKey,
-        'Content-Type': 'application/json',
-        Accept: 'application/json',
-      },
+      headers,
     });
 
     this.http.interceptors.response.use(
