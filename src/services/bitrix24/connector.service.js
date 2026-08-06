@@ -77,7 +77,7 @@ class Bitrix24ConnectorService {
       HANDLER: handler,
       TITLE: 'WhatsApp Integration',
       DESCRIPTION: 'WhatsApp → Bitrix24: leads, 2-way chat and marketing campaigns',
-      GROUP_NAME: 'CRM',
+      GROUP_NAME: '',
       LANG_ALL: {
         ru: {
           TITLE: 'WhatsApp Интеграция',
