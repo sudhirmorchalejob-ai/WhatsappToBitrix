@@ -216,11 +216,15 @@ class OperatorMessageHandler {
     const byExt = await this.conversationRepo.findByExternalChatId(rawId);
     if (byExt) return byExt;
 
-    // 2. Match conversation ID (e.g. "conv_19" or "19")
+    // 2. Match conversation ID (e.g. "conv_19" or "19"). Guard against
+    // bare phone numbers (12+ digits) that would overflow INT4.
     const match = rawId.match(/^(?:conv_)?(\d+)$/i);
     if (match) {
-      const byId = await this.conversationRepo.findById(Number(match[1]));
-      if (byId) return byId;
+      const numericId = Number(match[1]);
+      if (Number.isSafeInteger(numericId) && numericId <= 2147483647) {
+        const byId = await this.conversationRepo.findById(numericId);
+        if (byId) return byId;
+      }
     }
 
     // 3. Match WhatsApp phone number (e.g. "wa_9988776655" or "9988776655")

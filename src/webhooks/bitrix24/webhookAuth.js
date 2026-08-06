@@ -50,7 +50,7 @@ function createVerifyBitrix24Webhook({ installRepository = new InstallRepository
     }
 
     if (!install) {
-      if (process.env.NODE_ENV !== 'production' || !env.BITRIX24_CLIENT_ID) {
+      if (process.env.NODE_ENV !== 'production' || !process.env.BITRIX24_CLIENT_ID) {
         req.b24Auth = { payload, auth, memberId: memberId || 'default', install: null };
         return next();
       }

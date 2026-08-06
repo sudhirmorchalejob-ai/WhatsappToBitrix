@@ -27,6 +27,15 @@ class ConversationRepository {
     return conv;
   }
 
+  async findByContactId(contactId, limit = 5) {
+    return this.prisma.conversation.findMany({
+      where: { contactId: Number(contactId) },
+      include: { contact: true },
+      orderBy: { lastMessageAt: 'desc' },
+      take: Number(limit) || 5,
+    });
+  }
+
   async findByExternalChatId(bitrix24ExternalChatId, tenantId = null) {
     if (!bitrix24ExternalChatId) return null;
     const where = { bitrix24ExternalChatId };
