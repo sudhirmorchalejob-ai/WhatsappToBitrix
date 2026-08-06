@@ -24,10 +24,14 @@ function createApp() {
 
   app.disable('x-powered-by');
   
-  // Configure Helmet allowing inline styles & Google Fonts for Dashboard UI
+  // Configure Helmet allowing inline styles & Google Fonts for Dashboard UI.
+  // frameguard is disabled because Bitrix24 embeds the app handler in its
+  // own iframe; X-Frame-Options: SAMEORIGIN would block it ("refused to
+  // connect").
   app.use(
     helmet({
       contentSecurityPolicy: false,
+      frameguard: false,
     })
   );
 
