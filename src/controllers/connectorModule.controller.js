@@ -90,6 +90,10 @@ class ConnectorModuleController {
 
       const lineId = Number(env.BITRIX24_OPENLINE_ID) || install.lineId || 1;
       await this.connector.activate(install.memberId, { lineId, active: true }).catch(() => {});
+      await this.connector.setData(install.memberId, { lineId }).catch(() => {});
+      await this.installRepo
+        .updateOpenline(install.memberId, { connectorId: this.connector.connectorId(), lineId })
+        .catch(() => {});
       summary.activated = true;
       summary.ok = true;
 

@@ -59,10 +59,19 @@ class InstallRepository {
       if (tenant) resolvedTenantId = tenant.id;
     }
 
+    // Self-hosted (Box) installs report the OAuth authorization server
+    // (oauth.bitrix.info) as `domain`. That host cannot serve REST calls,
+    // so derive the real portal host from the client endpoint when present.
+    let cleanDomain = domain;
+    if (/oauth\.bitrix\.info/i.test(String(domain || '')) && clientEndpoint) {
+      const match = String(clientEndpoint).match(/https?:\/\/([^/]+)/);
+      if (match) cleanDomain = match[1];
+    }
+
     const payload = {
       tenantId: resolvedTenantId,
       memberId,
-      domain,
+      domain: cleanDomain,
       clientEndpoint,
       accessToken,
       refreshToken,
@@ -86,9 +95,16 @@ class InstallRepository {
     });
 
     if (existing) {
+      // Preserve the previously stored connector/line bindings when the
+      // new install payload does not carry them (re-installs must never
+      // wipe the active open-line linkage).
       return this.prisma.install.update({
         where: { id: existing.id },
-        data: payload,
+        data: {
+          ...payload,
+          connectorId: connectorId != null ? connectorId : existing.connectorId,
+          lineId: lineId != null ? lineId : existing.lineId,
+        },
       });
     }
 
