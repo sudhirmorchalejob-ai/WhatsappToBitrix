@@ -181,7 +181,7 @@ class ConnectorModuleController {
       const user = await this._ensurePortalUser(install, userName);
       const token = signToken({ id: user.id, tenantId: user.tenantId, role: user.role });
 
-      return res.redirect(`/?token=${encodeURIComponent(token)}&b24=1`);
+      return res.redirect(`/?token=${encodeURIComponent(token)}&b24=1&tab=chats`);
     } catch (err) {
       log.warn('app placement handler failed', { error: err.message });
       return res.status(500).type('html').send(`Failed to open the app: ${err.message}`);

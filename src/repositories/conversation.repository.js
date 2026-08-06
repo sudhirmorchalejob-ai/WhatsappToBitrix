@@ -95,6 +95,13 @@ class ConversationRepository {
     return this.prisma.conversation.update({ where: { id: Number(id) }, data });
   }
 
+  async markRead(id) {
+    return this.prisma.conversation.update({
+      where: { id: Number(id) },
+      data: { unreadCount: 0 },
+    });
+  }
+
   async reopen(id) {
     return this.update(id, { status: 'OPEN', closedAt: null });
   }

@@ -27,6 +27,14 @@ function createConversationController({
     return sendSuccess(res, conversation);
   }
 
+  async function markConversationRead(req, res) {
+    const conversation = await conversationRepo.markRead(req.params.id);
+    if (!conversation) {
+      throw new AppError('Conversation not found', 404, null, 'CONVERSATION_NOT_FOUND');
+    }
+    return sendSuccess(res, { id: Number(req.params.id), unreadCount: 0 });
+  }
+
   async function assignConversation(req, res) {
     const { byUserId } = req.body;
     const result = await routingService.assignByUser({
@@ -49,7 +57,7 @@ function createConversationController({
     return sendSuccess(res, result);
   }
 
-  return { listConversations, getConversation, assignConversation, unassignConversation };
+  return { listConversations, getConversation, markConversationRead, assignConversation, unassignConversation };
 }
 
 module.exports = { createConversationController, defaultController: createConversationController() };

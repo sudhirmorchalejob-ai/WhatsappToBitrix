@@ -3,6 +3,7 @@ import {
   LayoutDashboard,
   Users,
   MessageSquare,
+  MessageCircle,
   ClipboardList,
   Webhook,
   Bot,
@@ -16,6 +17,7 @@ export default function Sidebar({ activeTab, setActiveTab, user, onLogout }) {
 
   const navItems = [
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
+    { id: 'chats', label: 'WhatsApp Chats', icon: MessageCircle },
     { id: 'leads', label: 'WhatsApp Leads', icon: Users },
     { id: 'messages', label: '2-Way Message Logs', icon: MessageSquare },
     { id: 'activities', label: 'Activity Audit Trail', icon: ClipboardList },

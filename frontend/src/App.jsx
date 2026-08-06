@@ -9,13 +9,19 @@ import AutoRepliesView from './components/AutoRepliesView';
 import CampaignsView from './components/CampaignsView';
 import ActivityLogsView from './components/ActivityLogsView';
 import MessageLogsView from './components/MessageLogsView';
+import WhatsAppChatView from './components/WhatsAppChatView';
+
+const initialTabFromUrl = () => {
+  const tab = new URLSearchParams(window.location.search).get('tab');
+  return tab || 'dashboard';
+};
 
 export default function App() {
   const [token, setToken] = useState(() => localStorage.getItem('token') || null);
   const [user, setUser] = useState(null);
   const [tenant, setTenant] = useState(null);
 
-  const [activeTab, setActiveTab] = useState('dashboard');
+  const [activeTab, setActiveTab] = useState(initialTabFromUrl);
   const [stats, setStats] = useState(null);
   const [recentLeads, setRecentLeads] = useState([]);
   const [allLeads, setAllLeads] = useState([]);
@@ -150,6 +156,11 @@ export default function App() {
           title: 'WhatsApp Lead Dashboard',
           subtitle: 'Real-time metrics for leads, auto replies, and campaigns via WhatsApp',
         };
+      case 'chats':
+        return {
+          title: 'WhatsApp Chats',
+          subtitle: 'Live conversations from your WhatsApp Open Channel, WhatsApp-style',
+        };
       case 'leads':
         return {
           title: 'WhatsApp Created Leads',
@@ -226,6 +237,8 @@ export default function App() {
         )}
 
         {activeTab === 'messages' && <MessageLogsView token={token} />}
+
+        {activeTab === 'chats' && <WhatsAppChatView token={token} />}
 
         {activeTab === 'activities' && <ActivityLogsView token={token} />}
 

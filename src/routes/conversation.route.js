@@ -11,6 +11,7 @@ const router = Router();
 
 router.get('/', validate(listConversationsQuerySchema, 'query'), conversationController.listConversations);
 router.get('/:id', validate(conversationParamSchema, 'params'), conversationController.getConversation);
+router.post('/:id/read', validate(conversationParamSchema, 'params'), conversationController.markConversationRead);
 router.post(
   '/:id/assign',
   validate(conversationParamSchema, 'params'),
