@@ -13,6 +13,7 @@ const { TenantRepository } = require('./tenant.repository');
 const { UserRepository } = require('./user.repository');
 const { ActivityLogRepository } = require('./activityLog.repository');
 const { ConnectorLineMappingRepository } = require('./connectorLineMapping.repository');
+const { CampaignRepository } = require('./campaign.repository');
 
 module.exports = {
   ContactRepository,
@@ -30,4 +31,5 @@ module.exports = {
   UserRepository,
   ActivityLogRepository,
   ConnectorLineMappingRepository,
+  CampaignRepository,
 };

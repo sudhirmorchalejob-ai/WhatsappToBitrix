@@ -398,8 +398,9 @@ class OperatorMessageHandler {
    * is logged, never propagated.
    */
   async _confirmDelivery(canonical, localMessageId) {
+    if (!canonical || !canonical.memberId) return;
     try {
-      await this.bitrix24.call(BITRIX24_METHODS.IMCONNECTOR_SEND_STATUS_DELIVERY, {
+      await this.bitrix24.callAsApp(canonical.memberId, BITRIX24_METHODS.IMCONNECTOR_SEND_STATUS_DELIVERY, {
         CONNECTOR: canonical.connector,
         LINE: canonical.line,
         MESSAGES: [

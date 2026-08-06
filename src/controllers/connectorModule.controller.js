@@ -1,7 +1,11 @@
 const { env } = require('../config');
+const crypto = require('crypto');
 const logger = require('../utils/logger');
 const AppError = require('../utils/AppError');
+const { signToken } = require('../utils/jwt');
+const { hashPassword } = require('../utils/password');
 const { InstallRepository, ConnectorLineMappingRepository, ActivityLogRepository } = require('../repositories');
+const { UserRepository } = require('../repositories/user.repository');
 const { Bitrix24Service, Bitrix24ConnectorService } = require('../services/bitrix24');
 
 const log = logger.childFor('connector-module-controller');
@@ -24,12 +28,14 @@ class ConnectorModuleController {
     activityLogRepo = new ActivityLogRepository(),
     bitrix24 = new Bitrix24Service(),
     connector = new Bitrix24ConnectorService(),
+    userRepo = new UserRepository(),
   } = {}) {
     this.installRepo = installRepo;
     this.mappingRepo = mappingRepo;
     this.activityLogRepo = activityLogRepo;
     this.bitrix24 = bitrix24;
     this.connector = connector;
+    this.userRepo = userRepo;
   }
 
   /**
@@ -78,7 +84,10 @@ class ConnectorModuleController {
 
       // 3. Bind event handlers and activate
       await this.connector.bindEvents(install.memberId).catch(() => {});
-      
+
+      // 3b. Bind the app to the left sidebar (DEFAULT placement)
+      await this.connector.bindAppPlacement(install.memberId).catch(() => {});
+
       const lineId = Number(env.BITRIX24_OPENLINE_ID) || install.lineId || 1;
       await this.connector.activate(install.memberId, { lineId, active: true }).catch(() => {});
       summary.activated = true;
@@ -120,6 +129,84 @@ class ConnectorModuleController {
     `;
 
     return res.status(200).type('html').send(html);
+  }
+
+  /**
+   * Left-sidebar app handler — GET/POST /api/connector/app
+   * Bitrix24 opens this URL in an iframe when the user clicks the app in
+   * the left navigation (DEFAULT placement). The query string carries the
+   * portal tokens; we persist them, ensure a local user, sign a JWT and
+   * redirect to the SPA so no manual login is needed inside Bitrix24.
+   */
+  async handleAppPlacement(req, res) {
+    const params = req.method === 'POST' ? { ...req.query, ...req.body } : req.query;
+
+    try {
+      const memberId = params.member_id || params.MEMBER_ID || params.memberId;
+      let install = null;
+
+      if (params.auth_id || params.AUTH_ID || params.code) {
+        install = await this.bitrix24.oauth.installFromParams(params).catch(() => null);
+      }
+      if (!install && memberId) {
+        install = await this.installRepo.findByMemberId(memberId).catch(() => null);
+      }
+      if (!install) {
+        install = await this.installRepo.findActiveMostRecent().catch(() => null);
+      }
+
+      if (!install) {
+        return res.status(400).type('html').send('No Bitrix24 installation found for this portal.');
+      }
+
+      this.bitrix24.activate(install.memberId);
+
+      let userName = 'Bitrix24 User';
+      try {
+        const userParam = params.USER || params.user;
+        if (userParam) {
+          const parsed = typeof userParam === 'string' ? JSON.parse(userParam) : userParam;
+          if (parsed && (parsed.NAME || parsed.LAST_NAME)) {
+            userName = [parsed.NAME, parsed.LAST_NAME].filter(Boolean).join(' ').trim();
+          }
+        }
+      } catch {
+        // keep the default user name
+      }
+
+      const user = await this._ensurePortalUser(install, userName);
+      const token = signToken({ id: user.id, tenantId: user.tenantId, role: user.role });
+
+      return res.redirect(`/?token=${encodeURIComponent(token)}&b24=1`);
+    } catch (err) {
+      log.warn('app placement handler failed', { error: err.message });
+      return res.status(500).type('html').send(`Failed to open the app: ${err.message}`);
+    }
+  }
+
+  /**
+   * Ensures a local dashboard user exists for the portal so the embedded
+   * SPA can authenticate with its JWT (deterministic email per portal).
+   */
+  async _ensurePortalUser(install, name) {
+    const email = `b24_${install.memberId}@app.local`;
+    let user = await this.userRepo.findByEmail(email).catch(() => null);
+    if (!user) {
+      const passwordHash = await hashPassword(crypto.randomBytes(24).toString('hex'));
+      user = await this.userRepo.create({
+        email,
+        name: name || 'Bitrix24 User',
+        passwordHash,
+        role: 'TENANT_ADMIN',
+        tenantId: install.tenantId || null,
+      }).catch(async (err) => {
+        if (err && err.code === 'P2002') {
+          return this.userRepo.findByEmail(email);
+        }
+        throw err;
+      });
+    }
+    return user;
   }
 
   /**

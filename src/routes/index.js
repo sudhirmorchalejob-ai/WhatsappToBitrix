@@ -12,6 +12,7 @@ const settingRoute = require('./setting.route');
 const adminRoute = require('./admin.route');
 const agentRoute = require('./agent.route');
 const templateRoute = require('./template.route');
+const campaignRoute = require('./campaign.route');
 
 const connectorRoute = require('./connector.route');
 
@@ -42,5 +43,6 @@ router.use('/settings', settingRoute);
 router.use('/admin', adminRoute);
 router.use('/agents', agentRoute);
 router.use('/templates', templateRoute);
+router.use('/campaigns', campaignRoute);
 
 module.exports = router;

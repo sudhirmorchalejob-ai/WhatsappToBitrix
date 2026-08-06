@@ -122,6 +122,7 @@ const BITRIX24_METHODS = Object.freeze({
   APP_INFO: 'app.info',
   EVENT_BIND: 'event.bind',
   EVENT_UNBIND: 'event.unbind',
+  PLACEMENT_BIND: 'placement.bind',
 
   // Open Channels (imconnector)
   IMCONNECTOR_REGISTER: 'imconnector.register',

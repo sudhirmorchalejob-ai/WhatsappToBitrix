@@ -209,6 +209,15 @@ class Bitrix24Service {
   // ---------------- Install helpers ----------------
 
   /**
+   * Public webhook/event-handler base URL for this middleware, used as
+   * the ON_APP_UNINSTALL event handler when binding events.
+   */
+  _webhookUrl() {
+    const base = String(env.APP_BASE_URL || '').replace(/\/+$/, '');
+    return base ? `${base}/webhooks/bitrix24` : '';
+  }
+
+  /**
    * Confirms the install by reading app.info and stores the app user id.
    */
   async confirmInstall(memberId) {
@@ -235,7 +244,7 @@ class Bitrix24Service {
   async bindEvents(memberId, handlers = []) {
     const client = await this._ensureOAuthClient(memberId);
     const allHandlers = [
-      { event: BITRIX24_METHODS.ONAPPUNINSTALL, handler: this._webhookUrl() },
+      { event: BITRIX24_EVENTS.APP_UNINSTALL, handler: this._webhookUrl() },
       ...handlers,
     ];
 
@@ -282,6 +291,22 @@ class Bitrix24Service {
     if (!client) {
       client = await this._ensureConfigured();
     }
+    const res = await client.call(method, params, options);
+    return res && res.result;
+  }
+
+  /**
+   * Strict application-context call: uses the installed app's OAuth token
+   * for a portal and never falls back to a webhook. `imconnector.*`
+   * methods only work in application context (a webhook always fails with
+   * WRONG_AUTH_TYPE "Application context required"), so the Open Channels
+   * connector must go through this path.
+   */
+  async callAsApp(memberId, method, params = {}, options) {
+    if (!memberId) {
+      throw new AppError('memberId is required to call as the Bitrix24 app', 400, null, 'B24_MEMBER_REQUIRED');
+    }
+    const client = await this._ensureOAuthClient(memberId);
     const res = await client.call(method, params, options);
     return res && res.result;
   }

@@ -59,6 +59,44 @@ class Bitrix24ConnectorService {
     return base ? `${base}/webhooks/bitrix24` : '';
   }
 
+  _appHandlerUrl() {
+    const base = String(env.APP_BASE_URL || '').replace(/\/+$/, '');
+    return base ? `${base}/api/connector/app` : '';
+  }
+
+  /**
+   * Left-sidebar placement (DEFAULT). Once bound, the app appears in the
+   * main Bitrix24 navigation and is opened inside an iframe pointing to
+   * the handler URL (which auto-authenticates the user).
+   */
+  appPlacement() {
+    const handler = this._appHandlerUrl();
+    if (!handler) return null;
+    return {
+      PLACEMENT: 'LEFT_MENU',
+      HANDLER: handler,
+      TITLE: 'WhatsApp Integration',
+      DESCRIPTION: 'WhatsApp → Bitrix24: leads, 2-way chat and marketing campaigns',
+      GROUP_NAME: 'CRM',
+      LANG_ALL: {
+        ru: {
+          TITLE: 'WhatsApp Интеграция',
+          DESCRIPTION: 'WhatsApp → Bitrix24: лиды, чаты и маркетинговые рассылки',
+        },
+      },
+    };
+  }
+
+  /** Binds the app to the Bitrix24 left sidebar (idempotent). */
+  async bindAppPlacement(memberId) {
+    const placement = this.appPlacement();
+    if (!placement) {
+      return { placement: 'LEFT_MENU', ok: false, error: 'no handler URL configured (APP_BASE_URL)' };
+    }
+    const result = await this.bitrix24.callAsApp(memberId, BITRIX24_METHODS.PLACEMENT_BIND, placement);
+    return { placement: 'LEFT_MENU', ok: true, result };
+  }
+
   /**
    * Event.bind handlers for the Open Channels events. These make Bitrix24
    * POST operator replies to the Phase 4 webhook endpoint.
@@ -79,7 +117,7 @@ class Bitrix24ConnectorService {
 
     const icon = (svg) => ({ DATA_IMAGE: svg, COLOR: '#075E54', SIZE: ICON_SIZE, POSITION: ICON_POSITION });
 
-    return this.bitrix24.call(BITRIX24_METHODS.IMCONNECTOR_REGISTER, {
+    return this.bitrix24.callAsApp(memberId, BITRIX24_METHODS.IMCONNECTOR_REGISTER, {
       ID: connectorId,
       NAME: CONNECTOR_NAME,
       ICON: icon(WHATSAPP_ICON),
@@ -103,7 +141,7 @@ class Bitrix24ConnectorService {
     if (!lineId) throw new AppError('lineId is required to activate the connector', 400, null, 'B24_LINE_REQUIRED');
     const connectorId = this.connectorId();
     this._assertConnectorId(connectorId);
-    return this.bitrix24.callForMember(memberId, BITRIX24_METHODS.IMCONNECTOR_ACTIVATE, {
+    return this.bitrix24.callAsApp(memberId, BITRIX24_METHODS.IMCONNECTOR_ACTIVATE, {
       CONNECTOR: connectorId,
       LINE: lineId,
       ACTIVE: active ? '1' : '0',
@@ -119,7 +157,7 @@ class Bitrix24ConnectorService {
     if (!lineId) throw new AppError('lineId is required to set connector data', 400, null, 'B24_LINE_REQUIRED');
     const connectorId = this.connectorId();
     this._assertConnectorId(connectorId);
-    return this.bitrix24.callForMember(memberId, BITRIX24_METHODS.IMCONNECTOR_CONNECTOR_DATA_SET, {
+    return this.bitrix24.callAsApp(memberId, BITRIX24_METHODS.IMCONNECTOR_CONNECTOR_DATA_SET, {
       CONNECTOR: connectorId,
       LINE: lineId,
       DATA: {
@@ -155,6 +193,16 @@ class Bitrix24ConnectorService {
     } catch (err) {
       summary.error = summary.error || err.message;
       log.warn('connector event binding failed', { memberId, code: err.code, message: err.message });
+    }
+
+    try {
+      const placement = await this.bindAppPlacement(memberId);
+      summary.placement = placement;
+      if (!placement.ok) {
+        log.warn('app sidebar placement.bind failed', { memberId, error: placement.error });
+      }
+    } catch (err) {
+      log.warn('app sidebar placement.bind failed', { memberId, code: err.code, message: err.message });
     }
 
     const line = lineId || Number(env.BITRIX24_OPENLINE_ID) || null;
@@ -202,9 +250,10 @@ class Bitrix24ConnectorService {
       }
     }
 
-    // Default to line 1 (Standard Portal Open Line) if unconfigured
+    // Default to line 1 (Standard Portal Open Line) if unconfigured.
+    // If no portal installed the app, there is nothing to forward to.
+    if (!memberId) return null;
     if (!lineId) lineId = 1;
-    if (!memberId) memberId = '702773622d4c1bc40cb70b6ea16c6eef';
 
     return { memberId, connectorId, lineId };
   }
@@ -242,17 +291,11 @@ class Bitrix24ConnectorService {
     };
 
     try {
-      let result;
-      try {
-        result = await this.bitrix24.callForMember(portal.memberId, BITRIX24_METHODS.IMCONNECTOR_SEND_MESSAGES, payload);
-      } catch (firstErr) {
-        if (firstErr.code === 'WRONG_AUTH_TYPE' || firstErr.code === 'ERROR_METHOD_NOT_FOUND') {
-          log.info('imconnector call fallback to standard client', { error: firstErr.message });
-          result = await this.bitrix24.call(BITRIX24_METHODS.IMCONNECTOR_SEND_MESSAGES, payload);
-        } else {
-          throw firstErr;
-        }
-      }
+      const result = await this.bitrix24.callAsApp(
+        portal.memberId,
+        BITRIX24_METHODS.IMCONNECTOR_SEND_MESSAGES,
+        payload
+      );
 
       log.info('imconnector.send.messages call succeeded', {
         connectorId: portal.connectorId,
@@ -268,8 +311,10 @@ class Bitrix24ConnectorService {
         await this.activate(portal.memberId, { lineId: portal.lineId, active: true }).catch(() => {});
         await this.setData(portal.memberId, { lineId: portal.lineId }).catch(() => {});
 
-        const retryResult = await this.bitrix24.callForMember(portal.memberId, BITRIX24_METHODS.IMCONNECTOR_SEND_MESSAGES, payload).catch(() =>
-          this.bitrix24.call(BITRIX24_METHODS.IMCONNECTOR_SEND_MESSAGES, payload)
+        const retryResult = await this.bitrix24.callAsApp(
+          portal.memberId,
+          BITRIX24_METHODS.IMCONNECTOR_SEND_MESSAGES,
+          payload
         );
         return { sent: true, result: retryResult, lineId: portal.lineId, connectorId: portal.connectorId };
       }

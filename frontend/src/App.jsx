@@ -177,8 +177,8 @@ export default function App() {
         };
       case 'campaigns':
         return {
-          title: 'Campaign Total Messages',
-          subtitle: 'WhatsApp campaign outbound statistics & leads',
+          title: 'WhatsApp Campaigns',
+          subtitle: 'Create, manage and launch WhatsApp marketing campaigns from Bitrix24',
         };
       default:
         return { title: 'Dashboard', subtitle: '' };
@@ -240,7 +240,7 @@ export default function App() {
 
         {activeTab === 'autoreplies' && <AutoRepliesView stats={stats} />}
 
-        {activeTab === 'campaigns' && <CampaignsView stats={stats} />}
+        {activeTab === 'campaigns' && <CampaignsView token={token} />}
       </main>
     </div>
   );

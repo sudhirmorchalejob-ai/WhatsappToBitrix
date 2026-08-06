@@ -21,7 +21,7 @@ export default function Sidebar({ activeTab, setActiveTab, user, onLogout }) {
     { id: 'activities', label: 'Activity Audit Trail', icon: ClipboardList },
     { id: 'webhooks', label: 'Webhook Setup', icon: Webhook },
     { id: 'autoreplies', label: 'Auto Replies', icon: Bot },
-    { id: 'campaigns', label: 'Campaign Total', icon: Send },
+    { id: 'campaigns', label: 'Campaigns', icon: Send },
   ];
 
   return (

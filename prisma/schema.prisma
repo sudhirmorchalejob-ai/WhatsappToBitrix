@@ -289,11 +289,28 @@ model Campaign {
 
   tenant           Tenant?    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   messages         Message[]
+  recipients       CampaignRecipient[]
 
   @@index([tenantId])
   @@index([status])
   @@index([createdAt])
   @@map("campaigns")
+}
+
+model CampaignRecipient {
+  id         Int      @id @default(autoincrement())
+  campaignId Int
+  phone      String   @db.VarChar(20)
+  status     String   @default("PENDING") @db.VarChar(20)
+  error      String?  @db.Text
+  sentAt     DateTime?
+  createdAt  DateTime @default(now())
+
+  campaign   Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  @@index([campaignId])
+  @@index([status])
+  @@map("campaign_recipients")
 }
 
 model Agent {

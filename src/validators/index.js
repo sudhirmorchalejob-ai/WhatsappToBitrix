@@ -15,6 +15,13 @@ const {
   listTemplatesQuerySchema,
   templateIdParamSchema,
 } = require('./template.validator');
+const {
+  createCampaignSchema,
+  updateCampaignSchema,
+  listCampaignsQuerySchema,
+  campaignIdParamSchema,
+  executeCampaignSchema,
+} = require('./campaign.validator');
 
 module.exports = {
   validate,
@@ -52,4 +59,11 @@ module.exports = {
   updateTemplateSchema,
   listTemplatesQuerySchema,
   templateIdParamSchema,
+
+  // campaign
+  createCampaignSchema,
+  updateCampaignSchema,
+  listCampaignsQuerySchema,
+  campaignIdParamSchema,
+  executeCampaignSchema,
 };

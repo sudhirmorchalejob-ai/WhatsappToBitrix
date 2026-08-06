@@ -12,4 +12,8 @@ router.post('/install', json(), urlencoded({ extended: true }), (req, res) => co
 router.get('/handler', (req, res) => controller.handlePlacement(req, res));
 router.post('/handler', json(), urlencoded({ extended: true }), (req, res) => controller.handlePlacement(req, res));
 
+// Left-sidebar (DEFAULT placement) app handler — auto-auth into the SPA
+router.get('/app', (req, res) => controller.handleAppPlacement(req, res));
+router.post('/app', json(), urlencoded({ extended: true }), (req, res) => controller.handleAppPlacement(req, res));
+
 module.exports = router;
