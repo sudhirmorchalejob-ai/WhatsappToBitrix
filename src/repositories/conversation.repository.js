@@ -61,6 +61,7 @@ class ConversationRepository {
         bitrix24ThreadId: data.bitrix24ThreadId ?? null,
         bitrix24ExternalChatId: data.bitrix24ExternalChatId ?? null,
         leadId: data.leadId ? Number(data.leadId) : null,
+        campaignId: data.campaignId ? Number(data.campaignId) : null,
         assignedAgentId: data.assignedAgentId ? Number(data.assignedAgentId) : null,
         lastMessageAt: data.lastMessageAt ?? null,
         lastMessagePreview: data.lastMessagePreview ?? null,
@@ -77,6 +78,7 @@ class ConversationRepository {
       data: {
         ...(data.status !== undefined && { status: data.status }),
         ...(data.leadId !== undefined && { leadId: data.leadId ? Number(data.leadId) : null }),
+        ...(data.campaignId !== undefined && { campaignId: data.campaignId ? Number(data.campaignId) : null }),
         ...(data.provider !== undefined && { provider: data.provider }),
         ...(data.phoneNumberId !== undefined && { phoneNumberId: data.phoneNumberId }),
         ...(data.whatsappThreadId !== undefined && { whatsappThreadId: data.whatsappThreadId }),

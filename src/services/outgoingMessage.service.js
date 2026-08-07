@@ -1,6 +1,7 @@
 const logger = require('../utils/logger');
 const AppError = require('../utils/AppError');
 const { MESSAGE_DIRECTION, MESSAGE_STATUS, MESSAGE_TYPE } = require('../constants');
+const { CAMPAIGN_B24_SOURCE_ID } = require('./segmentResolver.service');
 const { ConversationService } = require('./conversation.service');
 const { CustomerResolverService } = require('./customerResolver.service');
 const { WhatsBoxService } = require('./whatsbox');
@@ -51,7 +52,8 @@ class OutgoingMessageService {
 
   async sendText(input) {
     const { conversation, messageContact } = await this._resolveContext(input);
-    const leadId = await this._resolveLeadId({ input, conversation, messageContact, firstBody: input.body });
+    const leadContext = this._leadContext(input, messageContact);
+    const leadId = await this._resolveLeadId({ input, conversation, messageContact, firstBody: input.body, leadContext });
 
     const message = await this.service.saveMessage({
       conversation,
@@ -61,6 +63,7 @@ class OutgoingMessageService {
       type: MESSAGE_TYPE.TEXT,
       body: input.body,
       status: MESSAGE_STATUS.PENDING,
+      campaignId: input.campaignId,
     });
 
     try {
@@ -83,7 +86,8 @@ class OutgoingMessageService {
   async sendMedia(input) {
     const { conversation, messageContact } = await this._resolveContext(input);
     const type = this._toDbType(input);
-    const leadId = await this._resolveLeadId({ input, conversation, messageContact, firstBody: input.caption });
+    const leadContext = this._leadContext(input, messageContact);
+    const leadId = await this._resolveLeadId({ input, conversation, messageContact, firstBody: input.caption, leadContext });
 
     const message = await this.service.saveMessage({
       conversation,
@@ -96,6 +100,7 @@ class OutgoingMessageService {
       mediaUrl: input.link,
       mediaName: input.filename,
       status: MESSAGE_STATUS.PENDING,
+      campaignId: input.campaignId,
     });
 
     try {
@@ -141,6 +146,8 @@ class OutgoingMessageService {
       phone: input.to,
       name: input.name,
       channelNumber: input.channelId || input.to,
+      campaignId: input.campaignId,
+      tenantId: input.tenantId,
     });
     return { conversation, messageContact: contact };
   }
@@ -149,14 +156,33 @@ class OutgoingMessageService {
    * Explicit leadId wins; otherwise reuse/search/create the open lead via
    * the shared orchestration. A missing open lead is non-fatal.
    */
-  async _resolveLeadId({ input, conversation, messageContact, firstBody }) {
+  async _resolveLeadId({ input, conversation, messageContact, firstBody, leadContext }) {
     if (input.leadId) return Number(input.leadId);
     const result = await this.service.ensureOpenLead({
       contact: messageContact,
       conversation,
       firstMessageBody: firstBody || null,
+      leadTitle: leadContext ? leadContext.title : null,
+      sourceId: leadContext ? leadContext.sourceId : null,
+      comments: leadContext ? leadContext.comments : null,
     });
     return result.lead ? Number(result.lead.ID) : null;
+  }
+
+  /**
+   * Campaign sends stamp the Bitrix24 lead with a campaign-aware title,
+   * a dedicated source id and a comment, so the lead is attributable to
+   * the campaign in the CRM. Non-campaign sends return null and behave as
+   * before.
+   */
+  _leadContext(input, contact) {
+    if (!input.campaignName) return null;
+    const label = contact.name || contact.firstName || `+${contact.whatsappPhone}`;
+    return {
+      title: `Campaign: ${String(input.campaignName).slice(0, 100)} — ${label}`.slice(0, 255),
+      sourceId: CAMPAIGN_B24_SOURCE_ID,
+      comments: `Sent via WhatsApp campaign "${input.campaignName}".`,
+    };
   }
 
   /** Maps the WhatsBox media type to the local Message.type (PDF-aware). */

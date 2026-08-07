@@ -2,11 +2,13 @@ const logger = require('../../../utils/logger');
 const { MESSAGE_DIRECTION, MESSAGE_STATUS, CONVERSATION_STATUS, WEBHOOK_SOURCE } = require('../../../constants');
 const { ConversationService } = require('../../../services/conversation.service');
 const { AutoReplyService } = require('../../../services/autoReply.service');
+const { normalizePhone } = require('../../../helpers/phone');
 const {
   MessageRepository,
   ConversationRepository,
   ActivityLogRepository,
 } = require('../../../repositories');
+const { CampaignRepository } = require('../../../repositories/campaign.repository');
 
 const { CustomerResolverService } = require('../../../services/customerResolver.service');
 const { Bitrix24ConnectorService } = require('../../../services/bitrix24');
@@ -19,6 +21,11 @@ const log = logger.childFor('webhook-incoming');
  * Flow:
  *   webhook -> dedup -> resolve contact & create/reuse Bitrix24 lead
  *   -> reopen closed chat -> save message -> forward to Bitrix24 Open Channels -> auto-reply
+ *
+ * Campaign replies: when the sender is a member of a marketing campaign
+ * audience, the message is linked back to that campaign (recipient row
+ * marked as replied, campaign reply counter bumped) and any lead created
+ * for the reply carries the campaign source/name.
  */
 class IncomingMessageHandler {
   constructor({
@@ -29,6 +36,7 @@ class IncomingMessageHandler {
     conversationRepo = new ConversationRepository(),
     activityLogRepo = null,
     autoReplyService = new AutoReplyService(),
+    campaignRepository = new CampaignRepository(),
   } = {}) {
     this.service = conversationService;
     // If no customerResolverService is explicitly injected (e.g. in tests
@@ -42,6 +50,7 @@ class IncomingMessageHandler {
     this.conversationRepo = conversationRepo;
     this.activityLogRepo = activityLogRepo;
     this.autoReplyService = autoReplyService;
+    this.campaignRepository = campaignRepository;
   }
 
   async handle(canonical, context = {}) {
@@ -66,6 +75,23 @@ class IncomingMessageHandler {
       }
     }
 
+    // Campaign match: is this sender a member of a campaign audience?
+    // Resolved before customer/lead creation so any lead created for the
+    // reply can be attributed to the campaign.
+    const phone = normalizePhone(canonical.from);
+    let campaignMatch = null;
+    if (this.campaignRepository && phone) {
+      try {
+        campaignMatch = await this.campaignRepository.findActiveRecipientByPhone(phone, tenantId);
+      } catch (err) {
+        log.warn('campaign reply lookup failed', { phone, code: err.code, message: err.message });
+      }
+    }
+    const campaignContext =
+      campaignMatch && campaignMatch.campaignName
+        ? { campaignName: campaignMatch.campaignName }
+        : null;
+
     // Step 1: Resolve contact locally + in Bitrix24, and create/reuse the Bitrix24 lead.
     const contactData = this._buildContact(canonical);
     const { contact, conversation, lead, contactCreated, leadCreated } =
@@ -79,6 +105,9 @@ class IncomingMessageHandler {
         provider: canonical.provider || WEBHOOK_SOURCE.WHATSBOX,
         phoneNumberId: canonical.phoneNumberId || null,
         firstMessageBody: canonical.body,
+        campaignId: campaignMatch ? campaignMatch.campaignId : null,
+        campaignContext,
+        conversationId: campaignMatch ? campaignMatch.conversationId : null,
         tenantId,
       });
 
@@ -138,7 +167,44 @@ class IncomingMessageHandler {
       whatsboxMessageId: canonical.messageId,
       timestamp: canonical.timestamp,
       status: MESSAGE_STATUS.SENT,
+      campaignId: campaignMatch ? campaignMatch.campaignId : null,
     });
+
+    // Step 3.25: Link the reply back to the campaign that reached this
+    // sender. Idempotent per recipient: only the first reply marks the
+    // recipient and bumps the campaign counter.
+    if (campaignMatch && !campaignMatch.repliedAt) {
+      try {
+        await this.campaignRepository.markReplied(campaignMatch.id, new Date());
+        await this.campaignRepository.incrementReplyCount(campaignMatch.campaignId);
+        await this._logActivity(tenantId, {
+          action: 'CAMPAIGN_REPLY_RECEIVED',
+          category: 'CAMPAIGN',
+          details: {
+            campaignId: campaignMatch.campaignId,
+            campaignName: campaignMatch.campaignName,
+            recipientId: campaignMatch.id,
+            messageId: message.id,
+            contactId: contact.id,
+            conversationId: conversation.id,
+            preview: (canonical.body || canonical.caption || '').slice(0, 200),
+          },
+          ipAddress: context.ip || null,
+        });
+        log.info('campaign reply linked', {
+          campaignId: campaignMatch.campaignId,
+          recipientId: campaignMatch.id,
+          messageId: message.id,
+          phone,
+        });
+      } catch (err) {
+        log.warn('campaign reply linking failed', {
+          campaignId: campaignMatch.campaignId,
+          code: err.code,
+          message: err.message,
+        });
+      }
+    }
 
     // Step 3.5: Forward customer WhatsApp message to Bitrix24 Open Channels (imconnector.send.messages)
     if (this.connectorService) {

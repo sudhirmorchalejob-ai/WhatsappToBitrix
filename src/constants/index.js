@@ -105,6 +105,12 @@ const BITRIX24_METHODS = Object.freeze({
   LEAD_ADD: 'crm.lead.add',
   LEAD_UPDATE: 'crm.lead.update',
 
+  // Deals
+  DEAL_GET: 'crm.deal.get',
+  DEAL_LIST: 'crm.deal.list',
+  DEAL_ADD: 'crm.deal.add',
+  DEAL_UPDATE: 'crm.deal.update',
+
   // Timeline
   TIMELINE_COMMENT_ADD: 'crm.timeline.comment.add',
 

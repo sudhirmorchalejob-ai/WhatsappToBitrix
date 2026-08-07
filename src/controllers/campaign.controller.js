@@ -38,12 +38,26 @@ function createCampaignController({ campaignService = new CampaignService() } = 
   async function executeCampaign(req, res) {
     const campaign = await campaignService.execute(req.params.id, {
       recipients: req.body.recipients,
+      segmentId: req.body.segmentId,
       tenantId: req.tenantId,
     });
     return sendSuccess(res, campaign);
   }
 
-  return { listCampaigns, createCampaign, getCampaign, updateCampaign, deleteCampaign, executeCampaign };
+  async function listSegments(req, res) {
+    const segments = campaignService.listSegments();
+    return sendSuccess(res, segments);
+  }
+
+  return {
+    listCampaigns,
+    createCampaign,
+    getCampaign,
+    updateCampaign,
+    deleteCampaign,
+    executeCampaign,
+    listSegments,
+  };
 }
 
 module.exports = { createCampaignController, defaultController: createCampaignController() };

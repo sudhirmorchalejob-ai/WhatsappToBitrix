@@ -18,10 +18,10 @@ const RECIPIENT_STATUS = Object.freeze({
 /**
  * Campaigns CRUD + recipient rows.
  *
- * Recipients live in the `campaign_recipients` table (created by a
- * migration) and are accessed through raw SQL because the Prisma client
- * is generated from the schema on the deploy machine; keeping this in
- * raw queries avoids requiring a client regeneration to ship the feature.
+ * Recipients live in the `campaign_recipients` table and are accessed
+ * through raw SQL because the Prisma client is generated from the schema
+ * on the deploy machine; keeping this in raw queries avoids requiring a
+ * client regeneration to ship the feature.
  */
 class CampaignRepository {
   constructor(prisma = prismaClient) {
@@ -86,6 +86,13 @@ class CampaignRepository {
     });
   }
 
+  async incrementReplyCount(id) {
+    return this.prisma.campaign.update({
+      where: { id: Number(id) },
+      data: { replyCount: { increment: 1 } },
+    });
+  }
+
   // ---------------- Recipients (raw SQL) ----------------
 
   async addRecipients(campaignId, phones) {
@@ -96,6 +103,7 @@ class CampaignRepository {
     const res = await this.prisma.$executeRaw(Prisma.sql`
       INSERT INTO "campaign_recipients" ("campaignId", "phone", "createdAt")
       VALUES ${Prisma.join(rows)}
+      ON CONFLICT ("campaignId", "phone") DO NOTHING
     `);
     return Number(res || 0);
   }
@@ -108,7 +116,16 @@ class CampaignRepository {
         phone,
         status,
         error,
+        attempts,
+        "contactId" AS "contactId",
+        "conversationId" AS "conversationId",
+        "leadId" AS "leadId",
+        "messageId" AS "messageId",
+        "whatsappMessageId" AS "whatsappMessageId",
         "sentAt" AS "sentAt",
+        "deliveredAt" AS "deliveredAt",
+        "readAt" AS "readAt",
+        "repliedAt" AS "repliedAt",
         "createdAt" AS "createdAt"
       FROM "campaign_recipients"
       WHERE "campaignId" = ${Number(campaignId)}
@@ -125,12 +142,96 @@ class CampaignRepository {
     `;
   }
 
-  async updateRecipientStatus(id, { status, error = null, sentAt = null }) {
+  async updateRecipientStatus(id, { status, error = null, sentAt = null, attempts = null, messageId = null, whatsappMessageId = null, contactId = null, conversationId = null, leadId = null }) {
+    const attemptsSet = attempts !== null && attempts !== undefined ? Prisma.sql`"attempts" = ${Number(attempts)},` : Prisma.sql``;
     return this.prisma.$executeRaw`
       UPDATE "campaign_recipients"
-      SET status = ${status}, error = ${error}, "sentAt" = ${sentAt}
+      SET status = ${status},
+          error = ${error},
+          "sentAt" = ${sentAt},
+          ${attemptsSet}
+          "messageId" = COALESCE(${messageId}, "messageId"),
+          "whatsappMessageId" = COALESCE(${whatsappMessageId}, "whatsappMessageId"),
+          "contactId" = COALESCE(${contactId}, "contactId"),
+          "conversationId" = COALESCE(${conversationId}, "conversationId"),
+          "leadId" = COALESCE(${leadId}, "leadId")
       WHERE id = ${Number(id)}
     `;
+  }
+
+  /**
+   * Delivery/read callbacks arrive with the provider message id. Store the
+   * timestamp on the recipient only when not already recorded, so counters
+   * recomputed from these columns stay idempotent.
+   */
+  async markDeliveredByMessageId(messageId, at = new Date()) {
+    if (!messageId) return 0;
+    return this.prisma.$executeRaw`
+      UPDATE "campaign_recipients"
+      SET "deliveredAt" = COALESCE("deliveredAt", ${at})
+      WHERE "messageId" = ${Number(messageId)}
+    `;
+  }
+
+  async markReadByMessageId(messageId, at = new Date()) {
+    if (!messageId) return 0;
+    return this.prisma.$executeRaw`
+      UPDATE "campaign_recipients"
+      SET "readAt" = COALESCE("readAt", ${at})
+      WHERE "messageId" = ${Number(messageId)}
+    `;
+  }
+
+  /**
+   * Syncs recipient delivery state after a provider (re)send: the message
+   * is the source of truth, the recipient row mirrors it. Used by the
+   * retry job when a campaign message is successfully re-sent.
+   */
+  async updateRecipientFromMessage(messageId, { status, error = null, sentAt = null }) {
+    if (!messageId) return 0;
+    return this.prisma.$executeRaw`
+      UPDATE "campaign_recipients"
+      SET status = ${status},
+          error = ${error},
+          "sentAt" = ${sentAt}
+      WHERE "messageId" = ${Number(messageId)}
+    `;
+  }
+
+  async markReplied(id, at = new Date()) {
+    return this.prisma.$executeRaw`
+      UPDATE "campaign_recipients"
+      SET "repliedAt" = ${at}
+      WHERE id = ${Number(id)}
+    `;
+  }
+
+  /**
+   * Finds the best campaign-recipient match for an inbound reply: the
+   * recipient of the most recent campaign (PROCESSING/COMPLETED/PARTIAL)
+   * who has not replied yet, scoped to the tenant when one is given.
+   */
+  async findActiveRecipientByPhone(phone, tenantId = null) {
+    if (!phone) return null;
+    const rows = await this.prisma.$queryRaw`
+      SELECT
+        r.id,
+        r."campaignId" AS "campaignId",
+        r.phone,
+        r."conversationId" AS "conversationId",
+        r."contactId" AS "contactId",
+        r."repliedAt" AS "repliedAt",
+        c.name AS "campaignName",
+        c.status AS "campaignStatus"
+      FROM "campaign_recipients" r
+      JOIN "campaigns" c ON c.id = r."campaignId"
+      WHERE r.phone = ${phone}
+        AND c.status IN ('PROCESSING', 'COMPLETED', 'PARTIAL')
+        AND (${tenantId}::int IS NULL OR c."tenantId" IS NULL OR c."tenantId" = ${tenantId})
+      ORDER BY (r."repliedAt" IS NOT NULL) ASC, c."createdAt" DESC
+      LIMIT 1
+    `;
+    return rows[0] || null;
   }
 
   async recipientCounts(campaignId) {
@@ -145,6 +246,33 @@ class CampaignRepository {
       if (row.status in counts) counts[row.status] = row.count;
     }
     return counts;
+  }
+
+  /**
+   * Recomputes campaign counters from recipient state. Idempotent, so it
+   * is safe to call after bulk sends and after each delivery/read
+   * callback.
+   */
+  async syncCounters(campaignId) {
+    return this.prisma.$executeRaw`
+      UPDATE "campaigns" c
+      SET "totalRecipients" = COALESCE(t.total, 0),
+          "sentCount" = COALESCE(t.sent, 0),
+          "deliveredCount" = COALESCE(t.delivered, 0),
+          "readCount" = COALESCE(t.read, 0),
+          "failedCount" = COALESCE(t.failed, 0)
+      FROM (
+        SELECT
+          COUNT(*)::int AS total,
+          COUNT(*) FILTER (WHERE status = 'SENT')::int AS sent,
+          COUNT(*) FILTER (WHERE "deliveredAt" IS NOT NULL)::int AS delivered,
+          COUNT(*) FILTER (WHERE "readAt" IS NOT NULL)::int AS read,
+          COUNT(*) FILTER (WHERE status = 'FAILED')::int AS failed
+        FROM "campaign_recipients"
+        WHERE "campaignId" = ${Number(campaignId)}
+      ) t
+      WHERE c.id = ${Number(campaignId)}
+    `;
   }
 }
 

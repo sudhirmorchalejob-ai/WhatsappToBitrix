@@ -126,13 +126,16 @@ class ConversationService {
     return { contact, created: true, fromBitrix24: false };
   }
 
-  async ensureConversation({ contactId, channelNumber, provider = WEBHOOK_SOURCE.WHATSBOX, phoneNumberId = null, tenantId = null }) {
+  async ensureConversation({ contactId, channelNumber, provider = WEBHOOK_SOURCE.WHATSBOX, phoneNumberId = null, campaignId = null, tenantId = null }) {
     const channel = normalizePhone(channelNumber) || String(channelNumber);
 
     let conversation = await this.conversationRepo.findByContactAndChannel(contactId, channel, tenantId);
     if (conversation) {
       if (conversation.provider !== provider || (phoneNumberId && conversation.phoneNumberId !== phoneNumberId)) {
         conversation = await this.conversationRepo.update(conversation.id, { provider, phoneNumberId });
+      }
+      if (campaignId && !conversation.campaignId) {
+        conversation = await this.conversationRepo.update(conversation.id, { campaignId: Number(campaignId) });
       }
       return { conversation, created: false };
     }
@@ -142,6 +145,7 @@ class ConversationService {
       channelNumber: channel,
       provider,
       phoneNumberId,
+      campaignId: campaignId ? Number(campaignId) : null,
       status: CONVERSATION_STATUS.OPEN,
       lastMessageAt: new Date(),
     };
@@ -153,7 +157,7 @@ class ConversationService {
     return { conversation, created: true };
   }
 
-  async ensureOpenLead({ contact, conversation, firstMessageBody = null, tenantId = null }) {
+  async ensureOpenLead({ contact, conversation, firstMessageBody = null, leadTitle = null, sourceId = null, comments = null, tenantId = null }) {
     const activeTenantId = tenantId !== null && tenantId !== undefined
       ? tenantId
       : (conversation ? conversation.tenantId : null);
@@ -188,14 +192,17 @@ class ConversationService {
       const leadId = Number(
         await this.bitrix24.createLead(
           {
-            title: this._leadTitle(contact, conversation.channelNumber),
+            title: leadTitle || this._leadTitle(contact, conversation.channelNumber),
             contactId: contact.bitrix24ContactId || undefined,
             name: contact.name || contact.firstName || undefined,
             phone: contact.whatsappPhone,
             assignedById,
-            comments: firstMessageBody
-              ? `First WhatsApp message: ${String(firstMessageBody).slice(0, 900)}`
-              : undefined,
+            sourceId: sourceId || undefined,
+            comments:
+              comments ||
+              (firstMessageBody
+                ? `First WhatsApp message: ${String(firstMessageBody).slice(0, 900)}`
+                : undefined),
           },
           activeTenantId
         )
@@ -271,6 +278,7 @@ class ConversationService {
     payload = null,
     timestamp = new Date(),
     status = MESSAGE_STATUS.PENDING,
+    campaignId = null,
     tenantId = null,
   }) {
     const activeTenantId = tenantId !== null && tenantId !== undefined
@@ -285,6 +293,7 @@ class ConversationService {
       conversationId: conversation.id,
       contactId: contact.id,
       leadId: activeLeadId,
+      campaignId: campaignId ? Number(campaignId) : null,
       whatsboxMessageId,
       wamid,
       direction,
@@ -346,8 +355,8 @@ class ConversationService {
 
     let shouldUpdateMain = false;
     if (existing.status === MESSAGE_STATUS.READ || existing.status === MESSAGE_STATUS.DELIVERED) {
-      if (status === MESSAGE_STATUS.FAILED || targetOrd <= currentOrd) {
-        shouldUpdateMain = false;
+      if (status !== MESSAGE_STATUS.FAILED && targetOrd > currentOrd) {
+        shouldUpdateMain = true;
       }
     } else if (status === MESSAGE_STATUS.FAILED || targetOrd > currentOrd) {
       shouldUpdateMain = true;

@@ -39,7 +39,7 @@ export default function Login({ onLoginSuccess }) {
           <div className="auth-logo">
             <MessageSquare size={28} />
           </div>
-          <h1 className="auth-title">WhatsApp → Bitrix24</h1>
+          <h1 className="auth-title">WhatsApp By Averlon</h1>
           <p className="auth-subtitle">Sign in to manage your WhatsApp leads & integrations</p>
         </div>
 

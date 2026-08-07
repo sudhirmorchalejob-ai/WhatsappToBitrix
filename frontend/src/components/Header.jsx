@@ -1,5 +1,6 @@
 import React from 'react';
-import { RefreshCw, Zap, CheckCircle2, AlertTriangle } from 'lucide-react';
+import { RefreshCw, Zap } from 'lucide-react';
+import SyncTimer from './SyncTimer';
 
 export default function Header({
   title,
@@ -9,6 +10,8 @@ export default function Header({
   onSync,
   isRefreshing,
   isSyncing,
+  syncElapsed,
+  lastSyncDuration,
 }) {
   const b24Ok = connectionStatus?.bitrix24?.ok;
   const waOk = connectionStatus?.whatsbox?.ok;
@@ -34,14 +37,21 @@ export default function Header({
         </div>
 
         {onSync && (
-          <button
-            className={`btn btn-primary btn-sm ${isSyncing ? 'btn-loading' : ''}`}
-            onClick={onSync}
-            disabled={isSyncing}
-          >
-            <Zap size={14} />
-            <span>{isSyncing ? 'Syncing...' : 'Auto-Sync Leads'}</span>
-          </button>
+          <>
+            <SyncTimer
+              isSyncing={isSyncing}
+              elapsed={syncElapsed}
+              lastSyncDuration={lastSyncDuration}
+            />
+            <button
+              className={`btn btn-primary btn-sm ${isSyncing ? 'btn-loading' : ''}`}
+              onClick={onSync}
+              disabled={isSyncing}
+            >
+              <Zap size={14} />
+              <span>{isSyncing ? 'Syncing…' : 'Auto-Sync Leads'}</span>
+            </button>
+          </>
         )}
 
         {onRefresh && (

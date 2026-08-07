@@ -11,6 +11,7 @@ const { defaultController: campaignController } = require('../controllers/campai
 
 const router = Router();
 
+router.get('/segments', campaignController.listSegments);
 router.get('/', validate(listCampaignsQuerySchema, 'query'), campaignController.listCampaigns);
 router.post('/', validate(createCampaignSchema), campaignController.createCampaign);
 router.get('/:id', validate(campaignIdParamSchema, 'params'), campaignController.getCampaign);

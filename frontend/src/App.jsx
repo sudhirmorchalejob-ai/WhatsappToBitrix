@@ -10,6 +10,9 @@ import CampaignsView from './components/CampaignsView';
 import ActivityLogsView from './components/ActivityLogsView';
 import MessageLogsView from './components/MessageLogsView';
 import WhatsAppChatView from './components/WhatsAppChatView';
+import { useFetch, clearApiCache } from './lib/useFetch';
+import { formatDuration } from './lib/formatDuration';
+import { useTheme } from './lib/useTheme';
 
 const initialTabFromUrl = () => {
   const tab = new URLSearchParams(window.location.search).get('tab');
@@ -21,23 +24,38 @@ export default function App() {
   const [user, setUser] = useState(null);
   const [tenant, setTenant] = useState(null);
 
-  const [activeTab, setActiveTab] = useState(initialTabFromUrl);
-  const [stats, setStats] = useState(null);
-  const [recentLeads, setRecentLeads] = useState([]);
-  const [allLeads, setAllLeads] = useState([]);
+  const { theme, toggleTheme } = useTheme();
 
-  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [activeTab, setActiveTab] = useState(initialTabFromUrl);
+
   const [isSyncing, setIsSyncing] = useState(false);
+  const [syncStartedAt, setSyncStartedAt] = useState(null);
+  const [syncElapsed, setSyncElapsed] = useState(0);
+  const [lastSync, setLastSync] = useState(null); // { durationSec, created, updated, skipped, total }
   const [alert, setAlert] = useState(null); // { type: 'success'|'error'|'info', text: '' }
 
-  // Load user profile if token exists
   useEffect(() => {
-    if (token) {
-      fetchProfile();
-    }
-  }, [token]);
+    if (syncStartedAt == null) return;
+    const id = setInterval(() => {
+      setSyncElapsed(Math.floor((Date.now() - syncStartedAt) / 1000));
+    }, 500);
+    return () => clearInterval(id);
+  }, [syncStartedAt]);
 
-  const fetchProfile = async () => {
+  // Dashboard stats drive the header pills, dashboard KPI cards, and the
+  // Auto Replies page. One hook = one fetch, cached, background-polled.
+  const {
+    data: statsData,
+    loading: statsLoading,
+    refreshing: statsRefreshing,
+    refetch: refetchStats,
+  } = useFetch('/api/dashboard/stats', { token, poll: 15000, ttl: 15000, skip: !token });
+
+  const stats = statsData || null;
+  const recentLeads = stats?.recentLeads || [];
+
+  // Load user profile if token exists
+  const fetchProfile = useCallback(async () => {
     try {
       const res = await fetch('/api/auth/me', {
         headers: { Authorization: `Bearer ${token}` },
@@ -54,49 +72,13 @@ export default function App() {
     } catch (err) {
       console.error('Profile fetch failed:', err);
     }
-  };
-
-  // Fetch stats & leads
-  const loadData = useCallback(async () => {
-    if (!token) return;
-    setIsRefreshing(true);
-
-    try {
-      // 1. Fetch dashboard stats
-      const statsRes = await fetch('/api/dashboard/stats', {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (statsRes.ok) {
-        const statsData = await statsRes.json();
-        setStats(statsData.data);
-        if (statsData.data?.recentLeads) {
-          setRecentLeads(statsData.data.recentLeads);
-        }
-      }
-
-      // 2. Fetch all leads & contacts
-      const leadsRes = await fetch('/api/contacts?limit=500', {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (leadsRes.ok) {
-        const leadsData = await leadsRes.json();
-        setAllLeads(leadsData.data?.items || []);
-      }
-    } catch (err) {
-      console.error('Data loading error:', err);
-    } finally {
-      setIsRefreshing(false);
-    }
   }, [token]);
 
   useEffect(() => {
     if (token) {
-      loadData();
-      // Auto-poll stats every 15 seconds
-      const timer = setInterval(() => loadData(), 15000);
-      return () => clearInterval(timer);
+      fetchProfile();
     }
-  }, [token, loadData]);
+  }, [token, fetchProfile]);
 
   const handleLoginSuccess = (newToken, newUser, newTenant) => {
     localStorage.setItem('token', newToken);
@@ -107,6 +89,7 @@ export default function App() {
 
   const handleLogout = () => {
     localStorage.removeItem('token');
+    clearApiCache();
     setToken(null);
     setUser(null);
     setTenant(null);
@@ -114,7 +97,10 @@ export default function App() {
 
   const handleAutoSync = async () => {
     if (!token || isSyncing) return;
+    const startedAt = Date.now();
     setIsSyncing(true);
+    setSyncStartedAt(startedAt);
+    setSyncElapsed(0);
     setAlert({ type: 'info', text: 'Syncing contacts and leads from Bitrix24...' });
 
     try {
@@ -127,11 +113,19 @@ export default function App() {
       if (!res.ok) throw new Error(data.message || 'Sync failed');
 
       if (data.data?.ok) {
+        const durationSec = Math.max(1, Math.round((Date.now() - startedAt) / 1000));
+        setLastSync({
+          durationSec,
+          created: data.data.created,
+          updated: data.data.updated,
+          skipped: data.data.skipped,
+          total: data.data.synced,
+        });
         setAlert({
           type: 'success',
-          text: `Auto-Sync Complete! ${data.data.created} new leads created, ${data.data.updated} updated, ${data.data.synced} total processed.`,
+          text: `Auto-Sync Complete in ${formatDuration(durationSec)}! ${data.data.created} new leads created, ${data.data.updated} updated, ${data.data.skipped} skipped (${data.data.synced} total processed).`,
         });
-        await loadData();
+        await refetchStats({ force: true });
       } else {
         setAlert({ type: 'error', text: `Sync failed: ${data.data?.error || 'Unknown error'}` });
       }
@@ -139,6 +133,7 @@ export default function App() {
       setAlert({ type: 'error', text: `Sync Error: ${err.message}` });
     } finally {
       setIsSyncing(false);
+      setSyncStartedAt(null);
       setTimeout(() => setAlert(null), 8000);
     }
   };
@@ -205,6 +200,8 @@ export default function App() {
         setActiveTab={setActiveTab}
         user={user}
         onLogout={handleLogout}
+        theme={theme}
+        onToggleTheme={toggleTheme}
       />
 
       <main className="main-content">
@@ -212,10 +209,12 @@ export default function App() {
           title={headerProps.title}
           subtitle={headerProps.subtitle}
           connectionStatus={stats?.connectionStatus}
-          onRefresh={loadData}
+          onRefresh={() => refetchStats({ background: true })}
           onSync={handleAutoSync}
-          isRefreshing={isRefreshing}
+          isRefreshing={statsRefreshing}
           isSyncing={isSyncing}
+          syncElapsed={syncElapsed}
+          lastSyncDuration={lastSync?.durationSec}
         />
 
         {alert && (
@@ -229,11 +228,18 @@ export default function App() {
             stats={stats}
             recentLeads={recentLeads}
             onViewAllLeads={() => setActiveTab('leads')}
+            loading={statsLoading}
           />
         )}
 
         {activeTab === 'leads' && (
-          <LeadsView leads={allLeads} onSync={handleAutoSync} isSyncing={isSyncing} />
+          <LeadsView
+            token={token}
+            onSync={handleAutoSync}
+            isSyncing={isSyncing}
+            syncElapsed={syncElapsed}
+            lastSyncDuration={lastSync?.durationSec}
+          />
         )}
 
         {activeTab === 'messages' && <MessageLogsView token={token} />}
@@ -245,13 +251,15 @@ export default function App() {
         {activeTab === 'webhooks' && (
           <WebhookSetupView
             token={token}
-            onSetupUpdated={loadData}
+            onSetupUpdated={() => refetchStats({ force: true })}
             onSync={handleAutoSync}
             isSyncing={isSyncing}
           />
         )}
 
-        {activeTab === 'autoreplies' && <AutoRepliesView stats={stats} />}
+        {activeTab === 'autoreplies' && (
+          <AutoRepliesView stats={stats} loading={statsLoading} token={token} />
+        )}
 
         {activeTab === 'campaigns' && <CampaignsView token={token} />}
       </main>

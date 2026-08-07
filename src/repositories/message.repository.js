@@ -49,6 +49,7 @@ class MessageRepository {
         conversationId: Number(data.conversationId),
         contactId: Number(data.contactId),
         leadId: data.leadId ? Number(data.leadId) : null,
+        campaignId: data.campaignId ? Number(data.campaignId) : null,
         whatsboxMessageId: data.whatsboxMessageId ?? null,
         wamid: data.wamid ?? null,
         direction: data.direction,

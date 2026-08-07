@@ -74,6 +74,7 @@ class AutoReplyService {
         messageId: message.id,
         templateId: resolved.templateId || null,
         body: resolved.body,
+        tenantId: conversation.tenantId || contact.tenantId || null,
       }).catch((err) => {
         log.warn('auto-reply audit log not written', { conversationId: conversation.id, message: err.message });
       });

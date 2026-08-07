@@ -195,6 +195,7 @@ model Conversation {
   bitrix24ThreadId     String?            @db.VarChar(255)
   bitrix24ExternalChatId String?          @db.VarChar(255)
   leadId               Int?
+  campaignId           Int?
   lastMessageAt        DateTime?
   lastMessagePreview   String?            @db.VarChar(500)
   lastMessageDirection MessageDirection?
@@ -208,6 +209,7 @@ model Conversation {
   tenant               Tenant?            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   contact              Contact            @relation(fields: [contactId], references: [id], onDelete: Restrict)
   assignedAgent        Agent?             @relation(fields: [assignedAgentId], references: [id], onDelete: SetNull)
+  campaign             Campaign?          @relation(fields: [campaignId], references: [id], onDelete: SetNull)
   messages             Message[]
   assignments          ConversationAssignment[]
   autoReplyLogs        AutoReplyLog[]
@@ -217,6 +219,7 @@ model Conversation {
   @@index([status])
   @@index([assignedAgentId])
   @@index([lastMessageAt])
+  @@index([campaignId])
 
   @@map("conversations")
 }
@@ -276,11 +279,17 @@ model Campaign {
   mediaName       String?        @db.VarChar(255)
   caption         String?        @db.VarChar(1000)
   createdVia      String         @default("WHATSAPP") @db.VarChar(20)
+
+  // Audience segment the campaign targets (Bitrix24 segment key + label).
+  segmentKey      String?        @db.VarChar(100)
+  segmentName     String?        @db.VarChar(255)
+
   totalRecipients Int            @default(0)
   sentCount       Int            @default(0)
   deliveredCount  Int            @default(0)
   readCount       Int            @default(0)
   failedCount     Int            @default(0)
+  replyCount      Int            @default(0)
   error           String?        @db.Text
   startedAt       DateTime?
   completedAt     DateTime?
@@ -289,27 +298,44 @@ model Campaign {
 
   tenant           Tenant?    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   messages         Message[]
+  conversations    Conversation[]
   recipients       CampaignRecipient[]
 
   @@index([tenantId])
   @@index([status])
   @@index([createdAt])
+  @@index([segmentKey])
   @@map("campaigns")
 }
 
 model CampaignRecipient {
-  id         Int      @id @default(autoincrement())
-  campaignId Int
-  phone      String   @db.VarChar(20)
-  status     String   @default("PENDING") @db.VarChar(20)
-  error      String?  @db.Text
-  sentAt     DateTime?
-  createdAt  DateTime @default(now())
+  id               Int       @id @default(autoincrement())
+  campaignId       Int
+  phone            String    @db.VarChar(20)
+  status           String    @default("PENDING") @db.VarChar(20)
+  error            String?   @db.Text
+  attempts         Int       @default(0)
 
-  campaign   Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  // Link to the local aggregate created for the recipient's thread.
+  contactId        Int?
+  conversationId   Int?
+  leadId           Int?
+  messageId        Int?
+  whatsappMessageId String?  @db.VarChar(255)
 
+  sentAt           DateTime?
+  deliveredAt      DateTime?
+  readAt           DateTime?
+  repliedAt        DateTime?
+  createdAt        DateTime  @default(now())
+
+  campaign         Campaign  @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  @@unique([campaignId, phone])
   @@index([campaignId])
-  @@index([status])
+  @@index([campaignId, status])
+  @@index([phone])
+  @@index([messageId])
   @@map("campaign_recipients")
 }
 

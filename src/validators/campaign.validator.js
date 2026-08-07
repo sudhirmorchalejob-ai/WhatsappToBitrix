@@ -6,6 +6,7 @@ const campaignBodySchema = z.string().trim().min(1, 'Body is required').max(4096
 const campaignMediaUrlSchema = z.string().url('mediaUrl must be a valid public URL').max(2000);
 const campaignCaptionSchema = z.string().trim().max(1000).optional();
 const campaignRecipientsSchema = z.array(z.string().trim().min(1)).max(10000).optional();
+const campaignSegmentIdSchema = z.string().trim().min(1).max(100);
 const campaignIdParamSchema = z.object({
   id: z.coerce.number().int().positive(),
 });
@@ -13,7 +14,8 @@ const campaignIdParamSchema = z.object({
 /**
  * POST /api/campaigns — create a WhatsApp marketing campaign. `type`
  * selects TEXT vs MEDIA payload; recipients are an array of phone
- * numbers (any format, normalized by the service).
+ * numbers (any format, normalized by the service) or `segmentId` targets
+ * a Bitrix24 audience segment resolved at launch time.
  */
 const createCampaignSchema = z
   .object({
@@ -23,6 +25,8 @@ const createCampaignSchema = z
     mediaUrl: campaignMediaUrlSchema.optional(),
     caption: campaignCaptionSchema,
     recipients: campaignRecipientsSchema,
+    segmentId: campaignSegmentIdSchema.optional(),
+    segmentName: z.string().trim().max(255).optional(),
   })
   .superRefine((data, ctx) => {
     if (data.type === 'TEXT' && !data.body) {
@@ -43,6 +47,8 @@ const updateCampaignSchema = z.object({
   mediaUrl: z.union([campaignMediaUrlSchema, z.literal(null)]).optional(),
   caption: z.union([campaignCaptionSchema, z.literal(null)]).optional(),
   recipients: campaignRecipientsSchema,
+  segmentId: z.union([campaignSegmentIdSchema, z.literal(null)]).optional(),
+  segmentName: z.union([z.string().trim().max(255), z.literal(null)]).optional(),
 });
 
 /**
@@ -55,10 +61,12 @@ const listCampaignsQuerySchema = z.object({
 });
 
 /**
- * POST /api/campaigns/:id/execute — optionally add recipients then launch.
+ * POST /api/campaigns/:id/execute — optionally add recipients (or a
+ * segment) then launch.
  */
 const executeCampaignSchema = z.object({
   recipients: campaignRecipientsSchema,
+  segmentId: campaignSegmentIdSchema.optional(),
 });
 
 module.exports = {

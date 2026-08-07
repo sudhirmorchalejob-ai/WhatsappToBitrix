@@ -2,6 +2,7 @@ const logger = require('../utils/logger');
 const { env } = require('../config');
 const { MESSAGE_TYPE, MESSAGE_STATUS, WEBHOOK_SOURCE } = require('../constants');
 const { MessageRepository, MessageStatusRepository, ActivityLogRepository } = require('../repositories');
+const { CampaignRepository } = require('../repositories/campaign.repository');
 const { WhatsBoxService } = require('../services/whatsbox');
 const { MetaService } = require('../services/meta');
 const { ConversationService } = require('../services/conversation.service');
@@ -40,6 +41,7 @@ class RetryOutgoingMessagesJob {
     meta = new MetaService(),
     conversationService = new ConversationService(),
     activityLogRepo = null,
+    campaignRepository = new CampaignRepository(),
     intervalMs = env.RETRY_INTERVAL_MS,
     maxRetries = env.OUTGOING_MAX_RETRIES,
   } = {}) {
@@ -49,6 +51,7 @@ class RetryOutgoingMessagesJob {
     this.meta = meta;
     this.conversationService = conversationService;
     this.activityLogRepo = activityLogRepo;
+    this.campaignRepository = campaignRepository;
     this.intervalMs = intervalMs;
     this.maxRetries = maxRetries;
     this.timer = null;
@@ -116,6 +119,7 @@ class RetryOutgoingMessagesJob {
       await this._backfillProviderId(message, sendResult);
       await this._recordAttempt(message, MESSAGE_STATUS.SENT, null, sendResult.raw);
       await this.messageRepo.updateStatus(message.id, MESSAGE_STATUS.SENT, { sentAt: new Date() });
+      await this._syncCampaignRecipient(message);
       log.info('outgoing message re-sent', { messageId: message.id });
       await this._logActivity(tenantId, {
         action: 'MESSAGE_RETRY_SUCCEEDED',
@@ -223,6 +227,30 @@ class RetryOutgoingMessagesJob {
       error,
       raw,
     });
+  }
+
+  /**
+   * A successfully re-sent campaign message flips the recipient row back
+   * to SENT so the campaign's counters and reply matching stay accurate.
+   * Best-effort: retry must never be blocked by campaign bookkeeping.
+   */
+  async _syncCampaignRecipient(message) {
+    if (!message || !message.campaignId || !this.campaignRepository) return;
+    try {
+      await this.campaignRepository.updateRecipientFromMessage(message.id, {
+        status: 'SENT',
+        error: null,
+        sentAt: new Date(),
+      });
+      await this.campaignRepository.syncCounters(message.campaignId);
+    } catch (err) {
+      log.warn('campaign recipient sync after retry failed', {
+        messageId: message.id,
+        campaignId: message.campaignId,
+        code: err.code,
+        message: err.message,
+      });
+    }
   }
 }
 

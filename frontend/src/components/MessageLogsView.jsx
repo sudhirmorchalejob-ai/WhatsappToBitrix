@@ -1,36 +1,124 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { MessageSquare, RefreshCw, ArrowDownLeft, ArrowUpRight, CheckCircle2, AlertCircle, Clock } from 'lucide-react';
+import { useFetch } from '../lib/useFetch';
+import { TableSkeleton } from './Skeleton';
+import { EmptyState, ErrorState } from './StateViews';
 
 export default function MessageLogsView({ token }) {
-  const [messages, setMessages] = useState([]);
-  const [loading, setLoading] = useState(false);
   const [filterDirection, setFilterDirection] = useState('ALL');
 
-  useEffect(() => {
-    fetchMessageLogs();
-  }, [token]);
+  const {
+    data: messagesData,
+    error,
+    loading,
+    refreshing,
+    refetch,
+  } = useFetch('/api/messages?limit=100', { token, ttl: 15000 });
 
-  const fetchMessageLogs = async () => {
-    setLoading(true);
-    try {
-      const res = await fetch('/api/messages?limit=100', {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      const data = await res.json();
-      if (res.ok && data.data?.items) {
-        setMessages(data.data.items);
-      }
-    } catch (err) {
-      console.error('Failed to fetch message logs:', err);
-    } finally {
-      setLoading(false);
-    }
-  };
+  const messages = Array.isArray(messagesData) ? messagesData : [];
 
   const filteredMessages = messages.filter((msg) => {
     if (filterDirection === 'ALL') return true;
     return msg.direction === filterDirection;
   });
+
+  const renderBody = () => {
+    if (error) {
+      return <ErrorState message={error} onRetry={() => refetch({ force: true })} />;
+    }
+    if (loading && messages.length === 0) {
+      return <TableSkeleton rows={7} columns={6} />;
+    }
+    if (messages.length === 0) {
+      return (
+        <EmptyState
+          title="No messages recorded yet"
+          message="Incoming WhatsApp messages and Bitrix24 operator replies will appear here."
+        />
+      );
+    }
+    if (filteredMessages.length === 0) {
+      return (
+        <EmptyState
+          title={`No ${filterDirection === 'INCOMING' ? 'incoming' : 'outgoing'} messages`}
+          message="Try switching the direction filter."
+        />
+      );
+    }
+
+    return (
+      <table className="data-table">
+        <thead>
+          <tr>
+            <th>Direction</th>
+            <th>Customer / Phone</th>
+            <th>Message Content</th>
+            <th>Type</th>
+            <th>Status</th>
+            <th>Timestamp</th>
+          </tr>
+        </thead>
+        <tbody>
+          {filteredMessages.map((msg) => {
+            const isIncoming = msg.direction === 'INCOMING';
+            const contactName = msg.contact
+              ? msg.contact.name || `${msg.contact.firstName || ''} ${msg.contact.lastName || ''}`.trim() || `+${msg.contact.whatsappPhone}`
+              : 'WhatsApp User';
+            const createdDate = new Date(msg.createdAt).toLocaleString('en-IN', {
+              dateStyle: 'medium',
+              timeStyle: 'short',
+            });
+
+            return (
+              <tr key={msg.id}>
+                <td>
+                  {isIncoming ? (
+                    <span className="badge badge-emerald">
+                      <ArrowDownLeft size={12} /> Incoming WA
+                    </span>
+                  ) : (
+                    <span className="badge badge-blue">
+                      <ArrowUpRight size={12} /> Bitrix Reply
+                    </span>
+                  )}
+                </td>
+                <td>
+                  <div style={{ fontWeight: 600 }}>{contactName}</div>
+                  <div style={{ fontSize: 11, fontFamily: 'monospace', color: 'var(--text-muted)' }}>
+                    +{msg.contact?.whatsappPhone || '—'}
+                  </div>
+                </td>
+                <td style={{ color: 'var(--text-main)', maxWidth: 380 }}>
+                  <div style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    {msg.body || msg.caption || '(Media Attachment)'}
+                  </div>
+                </td>
+                <td>
+                  <span className="badge badge-muted">{msg.type || 'TEXT'}</span>
+                </td>
+                <td>
+                  {msg.status === 'SENT' || msg.status === 'DELIVERED' ? (
+                    <span className="badge badge-emerald">
+                      <CheckCircle2 size={11} /> {msg.status}
+                    </span>
+                  ) : msg.status === 'FAILED' ? (
+                    <span className="badge badge-rose">
+                      <AlertCircle size={11} /> FAILED
+                    </span>
+                  ) : (
+                    <span className="badge badge-amber">
+                      <Clock size={11} /> {msg.status}
+                    </span>
+                  )}
+                </td>
+                <td style={{ fontSize: 12, color: 'var(--text-muted)' }}>{createdDate}</td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    );
+  };
 
   return (
     <div className="animate-fade">
@@ -61,96 +149,17 @@ export default function MessageLogsView({ token }) {
             </select>
 
             <button
-              className={`btn btn-secondary btn-sm ${loading ? 'btn-loading' : ''}`}
-              onClick={fetchMessageLogs}
-              disabled={loading}
+              className={`btn btn-secondary btn-sm ${refreshing ? 'btn-loading' : ''}`}
+              onClick={() => refetch({ background: true })}
+              disabled={refreshing}
             >
-              <RefreshCw size={14} className={loading ? 'spinner' : ''} />
+              <RefreshCw size={14} className={refreshing ? 'spinner' : ''} />
               <span>Refresh</span>
             </button>
           </div>
         </div>
 
-        <div className="table-container">
-          <table className="data-table">
-            <thead>
-              <tr>
-                <th>Direction</th>
-                <th>Customer / Phone</th>
-                <th>Message Content</th>
-                <th>Type</th>
-                <th>Status</th>
-                <th>Timestamp</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filteredMessages.length === 0 ? (
-                <tr>
-                  <td colSpan={6} style={{ textAlign: 'center', padding: '36px', color: 'var(--text-dim)' }}>
-                    No messages recorded yet.
-                  </td>
-                </tr>
-              ) : (
-                filteredMessages.map((msg) => {
-                  const isIncoming = msg.direction === 'INCOMING';
-                  const contactName = msg.contact
-                    ? msg.contact.name || `${msg.contact.firstName || ''} ${msg.contact.lastName || ''}`.trim() || `+${msg.contact.whatsappPhone}`
-                    : 'WhatsApp User';
-                  const createdDate = new Date(msg.createdAt).toLocaleString('en-IN', {
-                    dateStyle: 'medium',
-                    timeStyle: 'short',
-                  });
-
-                  return (
-                    <tr key={msg.id}>
-                      <td>
-                        {isIncoming ? (
-                          <span className="badge badge-emerald">
-                            <ArrowDownLeft size={12} /> Incoming WA
-                          </span>
-                        ) : (
-                          <span className="badge badge-blue">
-                            <ArrowUpRight size={12} /> Bitrix Reply
-                          </span>
-                        )}
-                      </td>
-                      <td>
-                        <div style={{ fontWeight: 600 }}>{contactName}</div>
-                        <div style={{ fontSize: 11, fontFamily: 'monospace', color: 'var(--text-muted)' }}>
-                          +{msg.contact?.whatsappPhone || '—'}
-                        </div>
-                      </td>
-                      <td style={{ color: 'var(--text-main)', maxWidth: 380 }}>
-                        <div style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                          {msg.body || msg.caption || '(Media Attachment)'}
-                        </div>
-                      </td>
-                      <td>
-                        <span className="badge badge-muted">{msg.type || 'TEXT'}</span>
-                      </td>
-                      <td>
-                        {msg.status === 'SENT' || msg.status === 'DELIVERED' ? (
-                          <span className="badge badge-emerald">
-                            <CheckCircle2 size={11} /> {msg.status}
-                          </span>
-                        ) : msg.status === 'FAILED' ? (
-                          <span className="badge badge-rose">
-                            <AlertCircle size={11} /> FAILED
-                          </span>
-                        ) : (
-                          <span className="badge badge-amber">
-                            <Clock size={11} /> {msg.status}
-                          </span>
-                        )}
-                      </td>
-                      <td style={{ fontSize: 12, color: 'var(--text-muted)' }}>{createdDate}</td>
-                    </tr>
-                  );
-                })
-              )}
-            </tbody>
-          </table>
-        </div>
+        <div className="table-container">{renderBody()}</div>
       </div>
     </div>
   );

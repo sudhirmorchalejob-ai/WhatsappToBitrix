@@ -2,6 +2,7 @@ const logger = require('../../../utils/logger');
 const { MESSAGE_DIRECTION, MESSAGE_STATUS } = require('../../../constants');
 const { ConversationService } = require('../../../services/conversation.service');
 const { MessageRepository } = require('../../../repositories');
+const { CampaignRepository } = require('../../../repositories/campaign.repository');
 
 const log = logger.childFor('webhook-status');
 
@@ -14,14 +15,20 @@ const log = logger.childFor('webhook-status');
  * ConversationService.recordMessageStatus (which enforces monotonic
  * transitions). Failed OUTGOING messages are left in a state the retry
  * job (src/jobs) picks up.
+ *
+ * Campaign sends are mirrored onto the campaign recipient row so the
+ * campaign's delivered/read counters reflect real delivery, and the
+ * campaign counters are recomputed after every callback.
  */
 class MessageStatusHandler {
   constructor({
     conversationService = new ConversationService(),
     messageRepo = new MessageRepository(),
+    campaignRepository = new CampaignRepository(),
   } = {}) {
     this.service = conversationService;
     this.messageRepo = messageRepo;
+    this.campaignRepository = campaignRepository;
   }
 
   async handle(canonical) {
@@ -54,6 +61,8 @@ class MessageStatusHandler {
       timestamp: canonical.timestamp,
     });
 
+    await this._syncCampaignRecipient(message, canonical);
+
     if (isFailure && message.direction === MESSAGE_DIRECTION.OUTGOING) {
       log.warn('outgoing message failed; retry job will pick it up', {
         messageId: message.id,
@@ -71,6 +80,38 @@ class MessageStatusHandler {
     const byId = await this.messageRepo.findByWhatsboxMessageId(providerMessageId);
     if (byId) return byId;
     return this.messageRepo.findByWamid(providerMessageId);
+  }
+
+  /**
+   * Mirrors delivery state onto the campaign recipient and recomputes the
+   * campaign counters. Best-effort: status callbacks must never fail
+   * message processing.
+   */
+  async _syncCampaignRecipient(message, canonical) {
+    if (!message || !message.campaignId || !this.campaignRepository) return;
+    const timestamp = canonical.timestamp || new Date();
+
+    try {
+      if (canonical.status === MESSAGE_STATUS.DELIVERED) {
+        await this.campaignRepository.markDeliveredByMessageId(message.id, timestamp);
+      } else if (canonical.status === MESSAGE_STATUS.READ) {
+        await this.campaignRepository.markReadByMessageId(message.id, timestamp);
+      } else if (canonical.status === MESSAGE_STATUS.FAILED) {
+        await this.campaignRepository.updateRecipientFromMessage(message.id, {
+          status: 'FAILED',
+          error: canonical.failedReason || 'Delivery failed',
+        });
+      }
+      await this.campaignRepository.syncCounters(message.campaignId);
+    } catch (err) {
+      log.warn('campaign status mirror failed', {
+        messageId: message.id,
+        campaignId: message.campaignId,
+        status: canonical.status,
+        code: err.code,
+        message: err.message,
+      });
+    }
   }
 }
 

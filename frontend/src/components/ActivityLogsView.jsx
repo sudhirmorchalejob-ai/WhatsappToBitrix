@@ -1,31 +1,21 @@
-import React, { useState, useEffect } from 'react';
-import { ClipboardList, RefreshCw, UserCheck, Sparkles, MessageSquare, Zap, Shield } from 'lucide-react';
+import React, { useState } from 'react';
+import { ClipboardList, RefreshCw, Sparkles, MessageSquare, Zap, Shield } from 'lucide-react';
+import { useFetch } from '../lib/useFetch';
+import { TableSkeleton } from './Skeleton';
+import { EmptyState, ErrorState } from './StateViews';
 
 export default function ActivityLogsView({ token }) {
-  const [logs, setLogs] = useState([]);
-  const [loading, setLoading] = useState(false);
   const [filterCategory, setFilterCategory] = useState('ALL');
 
-  useEffect(() => {
-    fetchActivityLogs();
-  }, [token]);
+  const {
+    data: logsData,
+    error,
+    loading,
+    refreshing,
+    refetch,
+  } = useFetch('/api/dashboard/activities?limit=100', { token, ttl: 15000 });
 
-  const fetchActivityLogs = async () => {
-    setLoading(true);
-    try {
-      const res = await fetch('/api/dashboard/activities?limit=100', {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      const data = await res.json();
-      if (res.ok && data.data?.items) {
-        setLogs(data.data.items);
-      }
-    } catch (err) {
-      console.error('Failed to fetch activity logs:', err);
-    } finally {
-      setLoading(false);
-    }
-  };
+  const logs = Array.isArray(logsData?.items) ? logsData.items : [];
 
   const filteredLogs = logs.filter((item) => {
     if (filterCategory === 'ALL') return true;
@@ -48,6 +38,79 @@ export default function ActivityLogsView({ token }) {
       default:
         return <span className="badge badge-muted">{action}</span>;
     }
+  };
+
+  const renderBody = () => {
+    if (error) {
+      return <ErrorState message={error} onRetry={() => refetch({ force: true })} />;
+    }
+    if (loading && logs.length === 0) {
+      return <TableSkeleton rows={7} columns={5} />;
+    }
+    if (logs.length === 0) {
+      return (
+        <EmptyState
+          title="No activity logs yet"
+          message="Lead creations, operator replies, and integration events will be recorded here."
+        />
+      );
+    }
+    if (filteredLogs.length === 0) {
+      return (
+        <EmptyState
+          title="Nothing in this category"
+          message="Try switching the category filter."
+        />
+      );
+    }
+
+    return (
+      <table className="data-table">
+        <thead>
+          <tr>
+            <th>Action</th>
+            <th>Category</th>
+            <th>Details / Description</th>
+            <th>Triggered By</th>
+            <th>Timestamp</th>
+          </tr>
+        </thead>
+        <tbody>
+          {filteredLogs.map((log) => {
+            const detailsText = log.details
+              ? typeof log.details === 'object'
+                ? log.details.text || log.details.reason || JSON.stringify(log.details)
+                : String(log.details)
+              : '—';
+
+            const createdDate = new Date(log.createdAt).toLocaleString('en-IN', {
+              dateStyle: 'medium',
+              timeStyle: 'short',
+            });
+
+            return (
+              <tr key={log.id}>
+                <td>{getActionBadge(log.action)}</td>
+                <td>
+                  <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-muted)' }}>
+                    {log.category || 'SYSTEM'}
+                  </span>
+                </td>
+                <td style={{ color: 'var(--text-main)', maxWidth: 360 }}>
+                  <div style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    {detailsText}
+                  </div>
+                </td>
+                <td style={{ color: 'var(--text-muted)', fontSize: 12 }}>
+                  {log.user ? log.user.name || log.user.email : 'System Event'}
+                </td>
+                <td style={{ fontSize: 12, color: 'var(--text-muted)' }}>{createdDate}</td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    );
   };
 
   return (
@@ -81,71 +144,17 @@ export default function ActivityLogsView({ token }) {
             </select>
 
             <button
-              className={`btn btn-secondary btn-sm ${loading ? 'btn-loading' : ''}`}
-              onClick={fetchActivityLogs}
-              disabled={loading}
+              className={`btn btn-secondary btn-sm ${refreshing ? 'btn-loading' : ''}`}
+              onClick={() => refetch({ background: true })}
+              disabled={refreshing}
             >
-              <RefreshCw size={14} className={loading ? 'spinner' : ''} />
+              <RefreshCw size={14} className={refreshing ? 'spinner' : ''} />
               <span>Refresh</span>
             </button>
           </div>
         </div>
 
-        <div className="table-container">
-          <table className="data-table">
-            <thead>
-              <tr>
-                <th>Action</th>
-                <th>Category</th>
-                <th>Details / Description</th>
-                <th>Triggered By</th>
-                <th>Timestamp</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filteredLogs.length === 0 ? (
-                <tr>
-                  <td colSpan={5} style={{ textAlign: 'center', padding: '36px', color: 'var(--text-dim)' }}>
-                    No activity logs recorded yet.
-                  </td>
-                </tr>
-              ) : (
-                filteredLogs.map((log) => {
-                  const detailsText = log.details
-                    ? typeof log.details === 'object'
-                      ? log.details.text || log.details.reason || JSON.stringify(log.details)
-                      : String(log.details)
-                    : '—';
-
-                  const createdDate = new Date(log.createdAt).toLocaleString('en-IN', {
-                    dateStyle: 'medium',
-                    timeStyle: 'short',
-                  });
-
-                  return (
-                    <tr key={log.id}>
-                      <td>{getActionBadge(log.action)}</td>
-                      <td>
-                        <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-muted)' }}>
-                          {log.category || 'SYSTEM'}
-                        </span>
-                      </td>
-                      <td style={{ color: 'var(--text-main)', maxWidth: 360 }}>
-                        <div style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                          {detailsText}
-                        </div>
-                      </td>
-                      <td style={{ color: 'var(--text-muted)', fontSize: 12 }}>
-                        {log.user ? log.user.name || log.user.email : 'System Event'}
-                      </td>
-                      <td style={{ fontSize: 12, color: 'var(--text-muted)' }}>{createdDate}</td>
-                    </tr>
-                  );
-                })
-              )}
-            </tbody>
-          </table>
-        </div>
+        <div className="table-container">{renderBody()}</div>
       </div>
     </div>
   );

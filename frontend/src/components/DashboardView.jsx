@@ -7,12 +7,18 @@ import {
   MessageCircle,
   ExternalLink,
   CheckCircle2,
-  Clock,
   ArrowUpRight,
 } from 'lucide-react';
+import { PageSkeleton } from './Skeleton';
+import { EmptyState } from './StateViews';
 
-export default function DashboardView({ stats, recentLeads, onViewAllLeads }) {
+export default function DashboardView({ stats, recentLeads, onViewAllLeads, loading }) {
   const kpis = stats?.kpis || {};
+
+  // First paint has nothing yet — show a full-page skeleton immediately.
+  if (loading && !stats) {
+    return <PageSkeleton kpis={3} tableRows={5} />;
+  }
 
   // 3 Primary Key Metrics requested by User:
   // 1. Leads created via WhatsApp
@@ -112,6 +118,12 @@ export default function DashboardView({ stats, recentLeads, onViewAllLeads }) {
         </div>
 
         <div className="table-container">
+          {recentLeads.length === 0 ? (
+            <EmptyState
+              title="No leads created yet"
+              message="Send a test message on WhatsApp to auto-create a Bitrix24 lead."
+            />
+          ) : (
           <table className="data-table">
             <thead>
               <tr>
@@ -124,14 +136,7 @@ export default function DashboardView({ stats, recentLeads, onViewAllLeads }) {
               </tr>
             </thead>
             <tbody>
-              {!recentLeads || recentLeads.length === 0 ? (
-                <tr>
-                  <td colSpan={6} style={{ textAlign: 'center', padding: '36px', color: 'var(--text-dim)' }}>
-                    No leads created yet. Send a test message on WhatsApp to auto-create a Bitrix24 lead.
-                  </td>
-                </tr>
-              ) : (
-                recentLeads.map((lead) => {
+                {recentLeads.map((lead) => {
                   const name = lead.name || [lead.firstName, lead.lastName].filter(Boolean).join(' ') || 'WhatsApp User';
                   const createdDate = new Date(lead.createdAt).toLocaleString('en-IN', {
                     dateStyle: 'medium',
@@ -166,10 +171,10 @@ export default function DashboardView({ stats, recentLeads, onViewAllLeads }) {
                       <td style={{ fontSize: 12, color: 'var(--text-muted)' }}>{createdDate}</td>
                     </tr>
                   );
-                })
-              )}
+                })}
             </tbody>
           </table>
+          )}
         </div>
       </div>
     </div>
