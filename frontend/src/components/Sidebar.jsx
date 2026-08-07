@@ -41,7 +41,7 @@ export default function Sidebar({ activeTab, setActiveTab, user, onLogout, theme
       <aside className={`sidebar ${mobileOpen ? 'mobile-open' : ''}`}>
         <div className="sidebar-header">
           <div className="brand-icon">
-            <MessageSquare size={22} />
+            <img src="/WA_logo.png" alt="WhatsApp By Averlon logo" />
           </div>
           <div>
             <div className="brand-title">WhatsApp By Averlon</div>

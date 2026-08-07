@@ -8,6 +8,7 @@
     "start": "node src/server.js",
     "dev": "nodemon",
     "build:frontend": "npm install --prefix frontend --include=dev && npm run build --prefix frontend",
+    "postinstall": "prisma generate",
     "test": "node --test",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
