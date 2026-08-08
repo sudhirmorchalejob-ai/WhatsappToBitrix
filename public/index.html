@@ -22,5 +22,26 @@
   </head>
   <body>
     <div id="root"></div>
+    <script src="https://api.bitrix24.com/api/v1/"></script>
+    <script>
+      (function () {
+        function finishInstall() {
+          try {
+            if (window.BX24 && typeof window.BX24.installFinish === 'function') {
+              window.BX24.installFinish();
+            }
+          } catch (e) {}
+        }
+        if (window.BX24 && typeof window.BX24.init === 'function') {
+          window.BX24.init(finishInstall);
+        } else {
+          window.addEventListener('load', function () {
+            if (window.BX24 && typeof window.BX24.init === 'function') {
+              window.BX24.init(finishInstall);
+            }
+          });
+        }
+      })();
+    </script>
   </body>
 </html>
