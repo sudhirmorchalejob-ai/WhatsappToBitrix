@@ -1,0 +1,37 @@
+NODE_ENV=production
+APP_NAME=whatsapp-b24-integration
+HOST=0.0.0.0
+PORT=9191
+
+# Database (Neon PostgreSQL Cloud Database)
+DATABASE_URL="postgresql://whatsapp_b24_integration:Whatsapp7897@postgres:5432/whatsapp_b24_integration?schema=public"
+
+LOG_LEVEL=info
+LOG_FILE_ENABLED=true
+API_KEYS="change-me"
+CORS_ORIGIN="*"
+TRUST_PROXY=true
+
+RATE_LIMIT_WINDOW_MS=60000
+RATE_LIMIT_MAX=300
+WEBHOOK_RATE_LIMIT_MAX=600
+
+ENABLE_OPENLINES_CONNECTOR=true
+
+# WhatsApp Provider Webhook Configuration
+WHATSBOX_API_URL="https://webhooks.1automations.com/webhook/6a717188a8f91d16c1fd05bd"
+WHATSBOX_API_KEY=""
+WHATSBOX_CHANNEL_ID="9041800275"
+WHATSBOX_WEBHOOK_SECRET=""
+WHATSAPP_WEBHOOK_URL="https://webhooks.1automations.com/webhook/6a717188a8f91d16c1fd05bd"
+
+# Bitrix24 Inbound REST Webhook
+BITRIX24_WEBHOOK_URL="https://crm.cupidpower.in/rest/1/6hprc04t0nsagdn9/"
+BITRIX24_WEBHOOK_SECRET=""
+
+# Bitrix24 Marketplace App OAuth (local app "Whatsapp by Averlon")
+BITRIX24_CLIENT_ID="local.6a746dad5bec12.95455919"
+BITRIX24_CLIENT_SECRET="Ztk3vAPTJID9sgaUaDBn91CfuFF5K60pi2XynQQuY9o1s01OBj"
+
+# Public Application URL (Set this to your live Render domain in production)
+APP_BASE_URL="https://whatsapp.averlonworld.org`"
