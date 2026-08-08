@@ -168,6 +168,10 @@ class Bitrix24OAuth {
    * OAuth authorization_code exchange (protocol where the app only
    * receives a `code`). Stores the resulting token pair.
    */
+  async handleCallback({ code, domain, memberId = null, redirectUri = null }) {
+    return this.exchangeCode({ code, domain, redirectUri });
+  }
+
   async exchangeCode({ code, domain, redirectUri = null }) {
     const { clientId, clientSecret } = this._credentials();
     if (!code || !domain) {

@@ -7,6 +7,7 @@ const { hashPassword } = require('../utils/password');
 const { InstallRepository, ConnectorLineMappingRepository, ActivityLogRepository } = require('../repositories');
 const { UserRepository } = require('../repositories/user.repository');
 const { Bitrix24Service, Bitrix24ConnectorService } = require('../services/bitrix24');
+const { b24InstallFinishScript } = require('../utils/b24InstallPage');
 
 const log = logger.childFor('connector-module-controller');
 
@@ -51,7 +52,6 @@ class ConnectorModuleController {
         </body></html>
       `);
     }
-
     let summary = { ok: false, memberId: null, registered: false, activated: false, error: null };
 
     try {
@@ -128,6 +128,7 @@ class ConnectorModuleController {
             Portal Member ID: <b>${summary.memberId || 'N/A'}</b>
           </div>
         </div>
+        ${b24InstallFinishScript()}
       </body>
       </html>
     `;

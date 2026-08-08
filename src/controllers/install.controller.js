@@ -5,6 +5,7 @@ const { InstallRepository } = require('../repositories');
 const { WebhookLogRepository } = require('../repositories');
 const { Bitrix24Service, Bitrix24ConnectorService } = require('../services/bitrix24');
 const { WEBHOOK_SOURCE, WEBHOOK_LOG_STATUS, BITRIX24_EVENTS } = require('../constants');
+const { b24InstallPage } = require('../utils/b24InstallPage');
 
 const log = logger.childFor('install');
 
@@ -114,12 +115,12 @@ class InstallController {
     }
     await this._provisionConnector(install.memberId);
 
-    res.status(200).send(`
-      <html><body style="font-family:sans-serif;text-align:center;padding:40px">
-        <h2>WhatsApp + Bitrix24 integration</h2>
-        <p>Installed successfully for portal <b>${install.domain || install.memberId}</b>.</p>
-        <p>You can close this window.</p>
-      </body></html>`);
+    res.status(200).send(
+      b24InstallPage({
+        title: 'WhatsApp + Bitrix24 integration',
+        body: `Installed successfully for portal <b>${install.domain || install.memberId}</b>. You can close this window.`,
+      })
+    );
   }
 
   /** POST /install - ONAPPINSTALL event with `auth` tokens. */
