@@ -13,6 +13,9 @@ const { BITRIX24_EVENTS } = require('../../constants');
  *                                connector. data: { CONNECTOR, LINE,
  *                                MESSAGES: [{ im, message, chat }] }.
  *   ONIMCONNECTORMESSAGEUPDATE - operator edit (handled in Phase 9).
+ *   crm.lead.onAdd             - a lead was created in the portal. When
+ *                                its title carries the campaign marker the
+ *                                handler mirrors it into a local campaign.
  *   everything else            - passed through as an unhandled event so
  *                                the controller can still audit it.
  */
@@ -114,6 +117,22 @@ function normalizeBitrix24Webhook(payload) {
         const canonical = normalizeOperatorMessage(message, { connector, line, memberId, ts: payload.ts, eventName });
         canonical.event = 'operatorMessageUpdate';
         events.push({ kind: canonical.event, eventName, canonical });
+      }
+    } else if (eventName === BITRIX24_EVENTS.CRM_LEAD_ADD.toUpperCase()) {
+      const leadId = pick(data.FIELDS, ['ID']);
+      if (leadId !== null) {
+        events.push({
+          kind: 'leadAdded',
+          eventName,
+          canonical: {
+            event: 'leadAdded',
+            provider: 'BITRIX24',
+            eventName,
+            memberId,
+            leadId: Number(leadId),
+            raw: payload,
+          },
+        });
       }
     } else {
       events.push({

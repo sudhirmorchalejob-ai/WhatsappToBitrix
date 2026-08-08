@@ -280,6 +280,9 @@ model Campaign {
   caption         String?        @db.VarChar(1000)
   createdVia      String         @default("WHATSAPP") @db.VarChar(20)
 
+  // Bitrix24 lead id created for this campaign (two-way campaign sync).
+  bitrix24LeadId  Int?
+
   // Audience segment the campaign targets (Bitrix24 segment key + label).
   segmentKey      String?        @db.VarChar(100)
   segmentName     String?        @db.VarChar(255)

@@ -1,6 +1,6 @@
 const { z } = require('zod');
 const { env } = require('../../config');
-const { BITRIX24_METHODS, BITRIX24_EVENTS } = require('../../constants');
+const { BITRIX24_METHODS, BITRIX24_EVENTS, CAMPAIGN_B24_LEAD_PREFIX } = require('../../constants');
 const logger = require('../../utils/logger');
 const AppError = require('../../utils/AppError');
 const { normalizePhone, comparePhones } = require('../../helpers/phone');
@@ -480,6 +480,32 @@ class Bitrix24Service {
 
     const client = await this._ensureConfigured(tenantId);
     const res = await client.call(BITRIX24_METHODS.LEAD_ADD, { fields });
+    return res.result;
+  }
+
+  /**
+   * Creates the Bitrix24 lead mirroring a WhatsApp campaign. The title
+   * carries the campaign marker so a later crm.lead.onAdd event can be
+   * recognised and linked back to a local campaign. When the campaign
+   * targets a segment, a `Segment: <name>` header is written at the top
+   * of the comments so the audience is visible in the CRM.
+   */
+  async createCampaignLead({ name, body = null, segmentName = null, tenantId = null }) {
+    if (!name) {
+      throw new AppError('Campaign name is required', 400, null, 'CAMPAIGN_NAME_REQUIRED');
+    }
+    const comments = [segmentName ? `Segment: ${segmentName}` : null, body ? String(body) : null]
+      .filter(Boolean)
+      .join('\n')
+      .slice(0, 5000);
+    const client = await this._ensureConfigured(tenantId);
+    const res = await client.call(BITRIX24_METHODS.LEAD_ADD, {
+      fields: {
+        TITLE: `${CAMPAIGN_B24_LEAD_PREFIX} ${String(name).trim().slice(0, 235)}`,
+        COMMENTS: comments || undefined,
+        OPENED: 'Y',
+      },
+    });
     return res.result;
   }
 

@@ -47,6 +47,16 @@ class CampaignRepository {
     return this.prisma.campaign.update({ where: { id: Number(id) }, data });
   }
 
+  async findByBitrix24LeadId(bitrix24LeadId, tenantId = null) {
+    if (!bitrix24LeadId) return null;
+    return this.prisma.campaign.findFirst({
+      where: {
+        bitrix24LeadId: Number(bitrix24LeadId),
+        ...(tenantId ? { tenantId: Number(tenantId) } : {}),
+      },
+    });
+  }
+
   async delete(id) {
     return this.prisma.campaign.delete({ where: { id: Number(id) } });
   }

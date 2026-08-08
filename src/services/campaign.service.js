@@ -7,6 +7,7 @@ const { CampaignRepository, CAMPAIGN_STATUS, RECIPIENT_STATUS } = require('../re
 const { WhatsBoxService } = require('./whatsbox');
 const { OutgoingMessageService } = require('./outgoingMessage.service');
 const { SegmentResolverService } = require('./segmentResolver.service');
+const { Bitrix24Service } = require('./bitrix24');
 
 const log = logger.childFor('campaign-service');
 
@@ -61,11 +62,13 @@ class CampaignService {
     repo = new CampaignRepository(),
     whatsbox = new WhatsBoxService(),
     segmentResolver = new SegmentResolverService(),
+    bitrix24 = new Bitrix24Service(),
     outgoingMessageService = null,
   } = {}) {
     this.repo = repo;
     this.whatsbox = whatsbox;
     this.segmentResolver = segmentResolver;
+    this.bitrix24 = bitrix24;
     this.outgoingMessageService =
       outgoingMessageService || new OutgoingMessageService({ whatsbox });
   }
@@ -101,6 +104,32 @@ class CampaignService {
     });
 
     if (phones.length) await this.repo.addRecipients(campaign.id, phones);
+
+    // WhatsApp-side campaigns are mirrored into Bitrix24 as a lead so the
+    // campaign is visible in the CRM. Best-effort: a Bitrix24 failure must
+    // never block the campaign creation.
+    if (data.createdVia === 'WHATSAPP') {
+      try {
+        const bitrix24LeadId = Number(
+          await this.bitrix24.createCampaignLead({
+            name: data.name,
+            body: data.body || null,
+            segmentName: segment ? segment.name : null,
+            tenantId: tenantId ? Number(tenantId) : null,
+          })
+        );
+        if (bitrix24LeadId) {
+          await this.repo.update(campaign.id, { bitrix24LeadId });
+        }
+      } catch (err) {
+        log.warn('campaign push to Bitrix24 failed; campaign stays local', {
+          campaignId: campaign.id,
+          code: err.code,
+          message: err.message,
+        });
+      }
+    }
+
     return this.repo.findById(campaign.id, tenantId);
   }
 

@@ -107,6 +107,7 @@ class Bitrix24ConnectorService {
     return [
       { event: BITRIX24_EVENTS.CONNECTOR_MESSAGE_ADD, handler: webhookUrl },
       { event: BITRIX24_EVENTS.CONNECTOR_MESSAGE_UPDATE, handler: webhookUrl },
+      { event: BITRIX24_EVENTS.CRM_LEAD_ADD, handler: webhookUrl },
     ];
   }
 

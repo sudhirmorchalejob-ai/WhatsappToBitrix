@@ -4,12 +4,14 @@ const { WEBHOOK_SOURCE, WEBHOOK_LOG_STATUS } = require('../../constants');
 const { WebhookLogRepository } = require('../../repositories/webhookLog.repository');
 const { normalizeBitrix24Webhook } = require('./normalizers');
 const { OperatorMessageHandler } = require('./handlers/operatorMessage.handler');
+const { LeadAddedHandler } = require('./handlers/lead.handler');
 
 const log = logger.childFor('bitrix24-webhook-controller');
 
 function createWebhookController({
   webhookLogRepository = new WebhookLogRepository(),
   handler = new OperatorMessageHandler(),
+  leadHandler = new LeadAddedHandler(),
 } = {}) {
   return {
     async handle(req, res) {
@@ -39,12 +41,15 @@ function createWebhookController({
         }
 
         try {
-          const result = await handler.handle(canonical, { install, auth });
+          const result =
+            kind === 'leadAdded'
+              ? await leadHandler.handle(canonical, { install, auth })
+              : await handler.handle(canonical, { install, auth });
           await webhookLogRepository.markProcessed(webhookLog.id, {
             status: WEBHOOK_LOG_STATUS.PROCESSED,
             processedAt: new Date(),
           });
-          processed.push({ kind, id: canonical.b24MessageId, ok: result.handled, skipped: Boolean(result.skipped), result });
+          processed.push({ kind, id: canonical.b24MessageId || canonical.leadId || null, ok: result.handled, skipped: Boolean(result.skipped), result });
         } catch (e) {
           log.error('bitrix24 webhook processing failed', { kind, b24MessageId: canonical.b24MessageId, error: e.message });
           try {

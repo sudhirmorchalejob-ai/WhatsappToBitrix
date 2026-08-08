@@ -151,7 +151,16 @@ const BITRIX24_EVENTS = Object.freeze({
   OPENLINE_MESSAGE_UPDATE: 'ONIMOPENLINEMESSAGEUPDATE',
   CONNECTOR_MESSAGE_ADD: 'ONIMCONNECTORMESSAGEADD',
   CONNECTOR_MESSAGE_UPDATE: 'ONIMCONNECTORMESSAGEUPDATE',
+  CRM_LEAD_ADD: 'crm.lead.onAdd',
 });
+
+/**
+ * Marker prefix used on Bitrix24 lead titles to flag a lead as the CRM
+ * mirror of a WhatsApp marketing campaign. Set when pushing campaigns
+ * from the WhatsApp dashboard and recognised when receiving crm.lead.onAdd
+ * events, so the two sides stay linked.
+ */
+const CAMPAIGN_B24_LEAD_PREFIX = '[WhatsApp Campaign]';
 
 module.exports = {
   MESSAGE_DIRECTION,
@@ -168,4 +177,5 @@ module.exports = {
   AGENT_ROLE,
   BITRIX24_METHODS,
   BITRIX24_EVENTS,
+  CAMPAIGN_B24_LEAD_PREFIX,
 };
