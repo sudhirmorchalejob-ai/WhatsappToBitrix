@@ -237,7 +237,13 @@ class CampaignService {
     for (const entry of segmentEntries) nameByPhone.set(entry.phone, entry.name);
 
     const explicit = this._normalizePhones(recipients);
-    const audience = [...new Set([...segmentEntries.map((e) => e.phone).filter(Boolean), ...explicit])];
+    let audience = [...new Set([...segmentEntries.map((e) => e.phone).filter(Boolean), ...explicit])];
+    if (!audience.length) {
+      // Fall back to recipients already stored on the campaign (e.g. a
+      // campaign mirrored from a Bitrix24 lead that carried its own phone).
+      const stored = await this.repo.listPendingRecipients(id);
+      audience = stored.map((r) => r.phone);
+    }
     if (!audience.length) {
       throw new AppError(
         segmentKey
