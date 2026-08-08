@@ -1,0 +1,23 @@
+services:
+  whatsapp-backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: whatsapp-backend
+    restart: unless-stopped
+    ports:
+      - "9191:9191"
+    expose:
+      - "9191"
+    env_file:
+      - .env
+    environment:
+      - DATABASE_URL=${DATABASE_URL:-postgresql://postgres:postgres@postgres:5432/whatsapp_b24_integration?schema=public}
+      - NODE_ENV=production
+      - PORT=9191
+    networks:
+      - prod-network
+
+networks:
+  prod-network:
+    external: true

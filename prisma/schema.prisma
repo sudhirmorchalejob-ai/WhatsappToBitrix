@@ -1,0 +1,327 @@
+// ------------------------------------------------------------------
+// WhatsBox <-> Bitrix24 integration schema (PostgreSQL)
+// Naming: model names singular, tables mapped to plural (see @@map)
+//
+// NOTE: create the database before migrating:
+//   psql -U postgres -c "CREATE DATABASE whatsapp_b24_integration;"
+// ------------------------------------------------------------------
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ------------------------------- Enums -------------------------------
+
+enum MessageDirection {
+  INCOMING
+  OUTGOING
+}
+
+enum MessageType {
+  TEXT
+  IMAGE
+  VIDEO
+  AUDIO
+  VOICE
+  DOCUMENT
+  PDF
+  LOCATION
+  CONTACT
+  STICKER
+  UNKNOWN
+}
+
+enum MessageState {
+  PENDING
+  SENT
+  DELIVERED
+  READ
+  FAILED
+}
+
+enum ConversationStatus {
+  OPEN
+  PENDING
+  CLOSED
+}
+
+enum SyncStatus {
+  PENDING
+  SYNCED
+  FAILED
+}
+
+enum WebhookSource {
+  WHATSBOX
+  META
+  BITRIX24
+}
+
+// ------------------------------- Models ------------------------------
+
+model Contact {
+  id                Int      @id @default(autoincrement())
+  whatsappPhone     String   @unique @db.VarChar(20)
+  firstName         String?  @db.VarChar(255)
+  lastName          String?  @db.VarChar(255)
+  name              String?  @db.VarChar(255)
+  email             String?  @db.VarChar(255)
+  company           String?  @db.VarChar(255)
+  avatarUrl         String?  @db.VarChar(500)
+  isBlocked         Boolean  @default(false)
+  lastActivityAt    DateTime?
+  bitrix24ContactId Int?     @unique
+  syncStatus        SyncStatus @default(PENDING)
+  meta              Json?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  conversations     Conversation[]
+  messages          Message[]
+  autoReplyLogs     AutoReplyLog[]
+
+  @@map("contacts")
+}
+
+model Conversation {
+  id                   Int                @id @default(autoincrement())
+  contactId            Int
+  channelNumber        String             @db.VarChar(20)
+  // WhatsApp provider the customer's messages arrive through (WHATSBOX or
+  // META). Operator replies are routed back over the same provider.
+  provider             WebhookSource      @default(WHATSBOX)
+  // Meta Cloud API phone number id (only meaningful for provider = META);
+  // WhatsBox uses channelNumber as its channel id.
+  phoneNumberId        String?            @db.VarChar(64)
+  status               ConversationStatus @default(OPEN)
+  whatsappThreadId     String?            @db.VarChar(255)
+  bitrix24ThreadId     String?            @db.VarChar(255)
+  bitrix24ExternalChatId String?          @unique @db.VarChar(255)
+  dealId               Int?
+  lastMessageAt        DateTime?
+  lastMessagePreview   String?            @db.VarChar(500)
+  lastMessageDirection MessageDirection?
+  lastMessageType      MessageType?
+  unreadCount          Int                @default(0)
+  assignedAgentId      Int?
+  closedAt             DateTime?
+  createdAt            DateTime           @default(now())
+  updatedAt            DateTime           @updatedAt
+
+  contact              Contact            @relation(fields: [contactId], references: [id], onDelete: Restrict)
+  assignedAgent        Agent?             @relation(fields: [assignedAgentId], references: [id], onDelete: SetNull)
+  messages             Message[]
+  assignments          ConversationAssignment[]
+  autoReplyLogs        AutoReplyLog[]
+
+  @@unique([contactId, channelNumber])
+  @@index([status])
+  @@index([assignedAgentId])
+  @@index([lastMessageAt])
+
+  @@map("conversations")
+}
+
+model Message {
+  id                Int             @id @default(autoincrement())
+  conversationId    Int
+  contactId         Int
+  dealId            Int?
+  whatsboxMessageId String?         @unique @db.VarChar(255)
+  wamid             String?         @db.VarChar(255)
+  direction         MessageDirection
+  type              MessageType     @default(UNKNOWN)
+  body              String?         @db.Text
+  caption           String?         @db.VarChar(1000)
+  mediaUrl          String?         @db.VarChar(2000)
+  mediaMimeType     String?         @db.VarChar(255)
+  mediaName         String?         @db.VarChar(255)
+  mediaSize         Int?
+  locationData      Json?
+  contactCard       Json?
+  payload           Json?
+  timestamp         DateTime        @default(now())
+  status            MessageState    @default(PENDING)
+  error             String?         @db.Text
+  retryCount        Int             @default(0)
+  sentAt            DateTime?
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+
+  conversation      Conversation    @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  contact           Contact         @relation(fields: [contactId], references: [id], onDelete: Restrict)
+  statuses          MessageStatus[]
+  autoReplyLogs     AutoReplyLog[]
+
+  @@index([conversationId, timestamp])
+  @@index([contactId, timestamp])
+  @@index([status])
+
+  @@map("messages")
+}
+
+model Agent {
+  id                Int          @id @default(autoincrement())
+  bitrix24UserId    Int          @unique
+  name              String       @db.VarChar(255)
+  email             String?      @db.VarChar(255)
+  phone             String?      @db.VarChar(50)
+  avatarUrl         String?      @db.VarChar(500)
+  whatsappChannelId String?      @db.VarChar(255)
+  isActive          Boolean      @default(true)
+  isSupervisor      Boolean      @default(false)
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+
+  conversations     Conversation[]
+  assignments       ConversationAssignment[]
+
+  @@map("agents")
+}
+
+model Setting {
+  id          Int      @id @default(autoincrement())
+  key         String   @unique @db.VarChar(100)
+  value       Json
+  type        String   @default("string") @db.VarChar(20)
+  description String?  @db.VarChar(500)
+  isSecret    Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("settings")
+}
+
+// One row per Bitrix24 portal that installed the marketplace app. Holds
+// the OAuth token pair (access_token expires hourly, refresh_token for
+// 180 days) plus the application_token used to verify ON_APP_UNINSTALL
+// events (the only credential still trusted after uninstall).
+model Install {
+  id              Int      @id @default(autoincrement())
+  memberId        String   @unique @db.VarChar(64)
+  domain          String   @db.VarChar(255)
+  clientEndpoint  String?  @db.VarChar(500)
+  accessToken     String   @db.VarChar(1024)
+  refreshToken    String   @db.VarChar(1024)
+  applicationToken String? @db.VarChar(255)
+  // Open Channels: the custom connector registered on this portal and the
+  // open line (LINE id) it is bound to. Filled in by the placement
+  // handler or from BITRIX24_OPENLINE_ID during auto-activation.
+  connectorId     String?  @db.VarChar(64)
+  lineId          Int?
+  userId          Int?
+  scope           String?  @db.VarChar(255)
+  status          String   @default("INSTALLED") @db.VarChar(20)
+  expiresAt       DateTime?
+  lastSeenAt      DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([status, updatedAt])
+  @@map("bitrix24_installs")
+}
+
+model WebhookLog {
+  id           Int          @id @default(autoincrement())
+  source       WebhookSource
+  eventType    String       @db.VarChar(100)
+  payload      Json?
+  status       String       @default("RECEIVED") @db.VarChar(20)
+  httpCode     Int?
+  errorMessage String?      @db.Text
+  ip           String?      @db.VarChar(50)
+  signature    String?      @db.VarChar(255)
+  processedAt  DateTime?
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+
+  @@index([source, createdAt])
+  @@index([status])
+
+  @@map("webhook_logs")
+}
+
+model MessageStatus {
+  id             Int          @id @default(autoincrement())
+  messageId      Int
+  status         MessageState
+  providerStatus String?      @db.VarChar(50)
+  attempt        Int          @default(1)
+  error          String?      @db.Text
+  raw            Json?
+  timestamp      DateTime     @default(now())
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  message        Message      @relation(fields: [messageId], references: [id], onDelete: Cascade)
+
+  @@index([messageId, timestamp])
+
+  @@map("message_statuses")
+}
+
+model ConversationAssignment {
+  id                Int      @id @default(autoincrement())
+  conversationId    Int
+  agentId           Int
+  assignedByAgentId Int?
+  isActive          Boolean  @default(true)
+  assignedAt        DateTime @default(now())
+  unassignedAt      DateTime?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  conversation      Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  agent             Agent        @relation(fields: [agentId], references: [id], onDelete: Restrict)
+
+  @@index([conversationId])
+  @@index([agentId, isActive])
+
+  @@map("conversation_assignments")
+}
+
+// Pre-defined reply templates (canned messages) used for quick replies
+// and as the source of the automatic welcome/away message.
+model Template {
+  id         Int      @id @default(autoincrement())
+  name       String   @db.VarChar(255)
+  body       String   @db.Text
+  category   String?  @db.VarChar(100)
+  isActive   Boolean  @default(true)
+  isDefault  Boolean  @default(false)
+  usageCount Int      @default(0)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  autoReplyLogs AutoReplyLog[]
+
+  @@index([isActive])
+  @@index([category])
+  @@map("templates")
+}
+
+// Audit trail of automatic replies sent by the system (once-per-contact
+// suppression and template usage tracking).
+model AutoReplyLog {
+  id             Int      @id @default(autoincrement())
+  contactId      Int
+  conversationId Int
+  messageId      Int
+  templateId     Int?
+  body           String   @db.Text
+  createdAt      DateTime @default(now())
+
+  contact      Contact      @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  message      Message      @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  template     Template?    @relation(fields: [templateId], references: [id], onDelete: SetNull)
+
+  @@index([contactId, createdAt])
+  @@index([conversationId])
+  @@map("auto_reply_logs")
+}
