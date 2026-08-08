@@ -8,6 +8,8 @@ const { InstallRepository, ConnectorLineMappingRepository, ActivityLogRepository
 const { UserRepository } = require('../repositories/user.repository');
 const { Bitrix24Service, Bitrix24ConnectorService } = require('../services/bitrix24');
 const { b24InstallFinishScript } = require('../utils/b24InstallPage');
+const { handle: bitrix24WebhookHandle } = require('../webhooks/bitrix24/webhook.controller');
+const { safeEqualStr } = require('../webhooks/bitrix24/webhookAuth');
 
 const log = logger.childFor('connector-module-controller');
 
@@ -144,6 +146,33 @@ class ConnectorModuleController {
    * redirect to the SPA so no manual login is needed inside Bitrix24.
    */
   async handleAppPlacement(req, res) {
+    const body = req.body;
+    const eventAuth = (body && body.auth) || {};
+    const eventMemberId = eventAuth.member_id || eventAuth.memberId;
+
+    // Bitrix24 delivers ALL bound app events to the app's configured
+    // "Handler path", which is this URL. Detect an event payload and route
+    // it through the webhook pipeline before falling into the sidebar
+    // placement logic (which would otherwise swallow it with an SPA redirect).
+    if (body && body.event && eventMemberId) {
+      try {
+        const install = await this.installRepo.findByMemberId(eventMemberId);
+        if (!install) {
+          return res.status(403).json({ status: 'error', message: 'Unknown Bitrix24 portal' });
+        }
+        const applicationToken = eventAuth.application_token || eventAuth.applicationToken;
+        if (install.applicationToken && !safeEqualStr(applicationToken, install.applicationToken)) {
+          return res.status(401).json({ status: 'error', message: 'Invalid Bitrix24 event application_token' });
+        }
+        log.info('bitrix24 event via app handler path', { event: body.event, memberId: eventMemberId });
+        req.b24Auth = { payload: body, auth: eventAuth, memberId: eventMemberId, install };
+        return bitrix24WebhookHandle(req, res);
+      } catch (err) {
+        log.error('bitrix24 event via app handler path failed', { error: err.message });
+        return res.status(500).json({ status: 'error', message: err.message });
+      }
+    }
+
     const params = req.method === 'POST' ? { ...req.query, ...req.body } : req.query;
 
     try {
