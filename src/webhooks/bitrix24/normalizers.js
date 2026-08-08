@@ -13,7 +13,7 @@ const { BITRIX24_EVENTS } = require('../../constants');
  *                                connector. data: { CONNECTOR, LINE,
  *                                MESSAGES: [{ im, message, chat }] }.
  *   ONIMCONNECTORMESSAGEUPDATE - operator edit (handled in Phase 9).
- *   crm.lead.onAdd             - a lead was created in the portal. When
+ *   ONCRMLEADADD              - a lead was created in the portal. When
  *                                its title carries the campaign marker the
  *                                handler mirrors it into a local campaign.
  *   everything else            - passed through as an unhandled event so

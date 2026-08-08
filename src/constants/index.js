@@ -151,7 +151,9 @@ const BITRIX24_EVENTS = Object.freeze({
   OPENLINE_MESSAGE_UPDATE: 'ONIMOPENLINEMESSAGEUPDATE',
   CONNECTOR_MESSAGE_ADD: 'ONIMCONNECTORMESSAGEADD',
   CONNECTOR_MESSAGE_UPDATE: 'ONIMCONNECTORMESSAGEUPDATE',
-  CRM_LEAD_ADD: 'crm.lead.onAdd',
+  // Lead created. App event code for event.bind; the portal delivers the
+  // payload with event "ONCRMLEADADD" (data.FIELDS.ID = new lead id).
+  CRM_LEAD_ADD: 'ONCRMLEADADD',
 });
 
 /**

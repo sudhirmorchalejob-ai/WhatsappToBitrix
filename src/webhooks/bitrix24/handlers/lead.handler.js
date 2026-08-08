@@ -45,7 +45,7 @@ const SEGMENT_ALIASES = (() => {
 /**
  * Bitrix24 -> WhatsApp campaign sync.
  *
- * Bitrix24 fires crm.lead.onAdd whenever a lead is created in the portal
+ * Bitrix24 fires ONCRMLEADADD whenever a lead is created in the portal
  * (including via REST webhook calls). When the lead's title carries the
  * campaign marker (CAMPAIGN_B24_LEAD_PREFIX), this handler mirrors it into
  * a local campaign (createdVia = BITRIX24) linked back by bitrix24LeadId.
