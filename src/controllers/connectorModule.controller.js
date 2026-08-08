@@ -147,7 +147,21 @@ class ConnectorModuleController {
    */
   async handleAppPlacement(req, res) {
     const body = req.body;
-    const eventAuth = (body && body.auth) || {};
+    let eventAuth = (body && body.auth) || {};
+    if (typeof eventAuth === 'string') {
+      try {
+        eventAuth = JSON.parse(eventAuth);
+      } catch {
+        eventAuth = {};
+      }
+    }
+    if (body && typeof body.data === 'string') {
+      try {
+        body.data = JSON.parse(body.data);
+      } catch {
+        // leave as-is
+      }
+    }
     const eventMemberId = eventAuth.member_id || eventAuth.memberId;
 
     // Bitrix24 delivers ALL bound app events to the app's configured

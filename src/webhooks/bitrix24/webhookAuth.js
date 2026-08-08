@@ -21,20 +21,47 @@ function safeEqualStr(a, b) {
  * stored install) is the only credential check needed for
  * ONIMCONNECTORMESSAGEADD and friends.
  *
+ * Bitrix24 delivers events as application/x-www-form-urlencoded, where
+ * the nested `data` / `auth` blocks arrive either in bracket notation
+ * (parsed into objects by the urlencoded middleware) or as JSON strings.
+ * A parsed object body and a raw JSON Buffer body are both accepted.
+ *
  * On success, `req.b24Auth` is populated with { payload, auth,
- * memberId, install } for the controller. Requires req.body to be the
- * RAW body Buffer (mount express.raw first).
+ * memberId, install } for the controller.
  */
+function coerceNestedStrings(payload) {
+  for (const key of ['data', 'auth']) {
+    const value = payload[key];
+    if (typeof value === 'string') {
+      try {
+        payload[key] = JSON.parse(value);
+      } catch {
+        // leave the original string untouched
+      }
+    }
+  }
+  return payload;
+}
+
 function createVerifyBitrix24Webhook({ installRepository = new InstallRepository() } = {}) {
   return async function verifyBitrix24Webhook(req, res, next) {
-    let payload;
-    try {
-      payload = JSON.parse(req.body.toString('utf8'));
-    } catch {
-      return sendError(res, 'Invalid JSON body', 400);
+    let payload = req.body;
+
+    if (Buffer.isBuffer(payload)) {
+      try {
+        payload = JSON.parse(payload.toString('utf8'));
+      } catch {
+        return sendError(res, 'Invalid JSON body', 400);
+      }
     }
 
-    const auth = (payload && payload.auth) || {};
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+      return sendError(res, 'Invalid webhook body', 400);
+    }
+
+    coerceNestedStrings(payload);
+
+    const auth = (payload.auth && typeof payload.auth === 'object') ? payload.auth : {};
     const memberId = auth.member_id || auth.memberId;
     const applicationToken = auth.application_token || auth.applicationToken;
 

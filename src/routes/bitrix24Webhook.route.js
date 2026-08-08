@@ -1,17 +1,18 @@
-const { Router, raw } = require('express');
+const { Router, json, urlencoded } = require('express');
 const webhookRateLimiter = require('../middlewares/webhookRateLimiter');
 const { verifyBitrix24Webhook } = require('../webhooks/bitrix24/webhookAuth');
 const bitrix24WebhookController = require('../webhooks/bitrix24/webhook.controller');
 
 const router = Router();
 
-// Raw body is required so the application_token payload can be parsed
-// from the exact bytes Bitrix24 sent. Verification happens against the
-// install row found via auth.member_id.
+// Bitrix24 delivers events as application/x-www-form-urlencoded (nested
+// data/auth blocks in bracket notation, or as JSON strings). Accept both
+// that and plain application/json so manual injections keep working.
 router.post(
   '/bitrix24',
   webhookRateLimiter,
-  raw({ type: '*/*', limit: '10mb' }),
+  json(),
+  urlencoded({ extended: true }),
   verifyBitrix24Webhook,
   bitrix24WebhookController.handle
 );
