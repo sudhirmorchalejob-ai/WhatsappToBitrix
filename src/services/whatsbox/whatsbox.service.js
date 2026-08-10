@@ -77,13 +77,24 @@ class WhatsBoxService {
   async sendText(input) {
     const { to, body, previewUrl, channelId, userId, name } = sendTextSchema.parse(input);
 
+    // The automation behind the gateway webhook may read the recipient
+    // under different keys and with or without a leading "+". Carry common
+    // aliases so the payload works regardless of its exact schema.
+    const recipient = String(to || '').replace(/^\+/, '');
+    const phoneWithPlus = recipient ? `+${recipient}` : recipient;
+
     const payload = {
       medium: MEDIUM,
       channel_id: channelId || this._defaultChannelId(),
-      to,
+      to: phoneWithPlus,
+      phone: phoneWithPlus,
+      number: phoneWithPlus,
+      recipient: phoneWithPlus,
       name,
       user_id: userId,
       body,
+      message: body,
+      text: body,
       preview_url: previewUrl,
     };
 
