@@ -1,0 +1,24 @@
+version: "3.9"
+
+services:
+  nginx:
+    image: nginx:alpine
+    container_name: reverse-proxy02
+    restart: unless-stopped
+
+    ports:
+      - "80:80"
+      - "443:443"
+
+    volumes:
+      - ./conf.d:/etc/nginx/conf.d:ro
+      - /etc/letsencrypt:/etc/letsencrypt:ro
+      - /var/www/certbot:/var/www/certbot:ro
+      - ./logs:/var/log/nginx
+
+    networks:
+      - prod-network
+
+networks:
+  prod-network:
+    external: true

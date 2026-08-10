@@ -81,10 +81,18 @@ class Bitrix24Client {
       );
     }
 
+    let normalizedUrl = String(baseURL).trim();
+    if (!/^https?:\/\//i.test(normalizedUrl)) {
+      normalizedUrl = `https://${normalizedUrl}`;
+    }
+    if (!normalizedUrl.endsWith('/')) {
+      normalizedUrl = `${normalizedUrl}/`;
+    }
+
     this.accessToken = options.accessToken || null;
     this.onAuthFailure = options.onAuthFailure || null;
     this.http = axios.create({
-      baseURL,
+      baseURL: normalizedUrl,
       timeout: REQUEST_TIMEOUT_MS,
       headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
     });
@@ -211,3 +219,4 @@ class Bitrix24Client {
 }
 
 module.exports = { Bitrix24Client, mapAxiosError, isTransient, isAuthError };
+

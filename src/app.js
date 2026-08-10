@@ -43,6 +43,14 @@ function createApp() {
 
   app.use(requestLogger);
 
+  // Normalize leading duplicate slashes (e.g. //api/connector/app -> /api/connector/app)
+  app.use((req, res, next) => {
+    if (req.url && req.url.startsWith('//')) {
+      req.url = req.url.replace(/^\/+/, '/');
+    }
+    next();
+  });
+
   // Serve static public assets (Admin Dashboard UI)
   app.use(express.static(path.join(__dirname, '../public')));
 
@@ -71,3 +79,4 @@ function createApp() {
 }
 
 module.exports = createApp;
+
