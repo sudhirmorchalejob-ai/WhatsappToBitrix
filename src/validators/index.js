@@ -1,4 +1,5 @@
 const { validate, pagination, idParamSchema, queryBoolean, MAX_LIMIT } = require('./common');
+const { forgotPasswordSchema, resetPasswordSchema } = require('./auth.validator');
 const {
   sendTextSchema,
   sendMediaSchema,
@@ -29,6 +30,10 @@ module.exports = {
   idParamSchema,
   queryBoolean,
   MAX_LIMIT,
+
+  // auth
+  forgotPasswordSchema,
+  resetPasswordSchema,
 
   // message
   sendTextSchema,

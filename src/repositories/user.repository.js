@@ -21,6 +21,14 @@ class UserRepository {
     });
   }
 
+  async findByResetToken(resetPasswordToken) {
+    if (!resetPasswordToken) return null;
+    return this.prisma.user.findFirst({
+      where: { resetPasswordToken },
+      include: { tenant: true },
+    });
+  }
+
   async create(data) {
     return this.prisma.user.create({
       data: {

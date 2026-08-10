@@ -20,33 +20,36 @@ export default function DashboardView({ stats, recentLeads, onViewAllLeads, load
     return <PageSkeleton kpis={3} tableRows={5} />;
   }
 
-  // 3 Primary Key Metrics requested by User:
-  // 1. Leads created via WhatsApp
+  // Primary Key Metrics:
+  // 1. Total leads (synced from Bitrix24 + created via WhatsApp)
   // 2. Auto reply messages via WhatsApp
   // 3. Campaign total created via WhatsApp
-  const leadsViaWhatsApp = kpis.leadsCreatedViaWhatsApp ?? kpis.totalCustomers ?? 0;
+  const totalLeads = kpis.totalLeads ?? kpis.leadsCreatedViaWhatsApp ?? kpis.totalCustomers ?? 0;
+  const whatsAppLeads = kpis.leadsCreatedViaWhatsApp ?? 0;
   const autoReplyMessages = kpis.automatedMessages ?? 0;
   const campaignTotal = kpis.campaignMessages ?? 0;
 
-  const todaysLeads = kpis.todaysWhatsAppLeads ?? kpis.todaysLeads ?? 0;
+  const todaysLeads = kpis.todaysLeads ?? kpis.todaysWhatsAppLeads ?? 0;
   const activeChats = kpis.activeConversations ?? 0;
 
   return (
     <div className="animate-fade">
       {/* 3 Primary Focus KPI Cards */}
       <div className="kpi-grid">
-        {/* Metric 1: Leads Created via WhatsApp */}
+        {/* Metric 1: Total Leads */}
         <div className="kpi-card" style={{ background: 'var(--gradient-card)' }}>
           <div className="kpi-header">
-            <span className="kpi-title">Leads Created via WhatsApp</span>
+            <span className="kpi-title">Total Leads</span>
             <div className="kpi-icon-wrapper kpi-icon-emerald">
               <Users size={20} />
             </div>
           </div>
           <div className="kpi-value" style={{ color: 'var(--accent-emerald)' }}>
-            {leadsViaWhatsApp}
+            {totalLeads}
           </div>
-          <div className="kpi-subtext">Synced to Bitrix24 from incoming WhatsApp messages</div>
+          <div className="kpi-subtext">
+            Contacts &amp; leads synced from Bitrix24 ({whatsAppLeads} via WhatsApp)
+          </div>
         </div>
 
         {/* Metric 2: Auto Reply Messages via WhatsApp */}
@@ -82,7 +85,7 @@ export default function DashboardView({ stats, recentLeads, onViewAllLeads, load
       <div className="kpi-grid" style={{ marginBottom: 28 }}>
         <div className="kpi-card">
           <div className="kpi-header">
-            <span className="kpi-title">Today's WhatsApp Leads</span>
+            <span className="kpi-title">Today's Leads</span>
             <div className="kpi-icon-wrapper kpi-icon-amber">
               <Sparkles size={18} />
             </div>
@@ -107,9 +110,9 @@ export default function DashboardView({ stats, recentLeads, onViewAllLeads, load
       <div className="glass-card">
         <div className="glass-card-header">
           <div>
-            <h2 className="card-title">Recent Leads Created via WhatsApp</h2>
+            <h2 className="card-title">Recent Leads</h2>
             <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>
-              Latest WhatsApp contacts synced as leads in Bitrix24 CRM
+              Latest contacts and leads pulled from Bitrix24 CRM / WhatsApp
             </p>
           </div>
           <button className="btn btn-secondary btn-sm" onClick={onViewAllLeads}>
@@ -120,8 +123,8 @@ export default function DashboardView({ stats, recentLeads, onViewAllLeads, load
         <div className="table-container">
           {recentLeads.length === 0 ? (
             <EmptyState
-              title="No leads created yet"
-              message="Send a test message on WhatsApp to auto-create a Bitrix24 lead."
+              title="No leads yet"
+              message="Run Auto-Sync Leads to pull contacts from Bitrix24, or send a test message on WhatsApp to auto-create a Bitrix24 lead."
             />
           ) : (
           <table className="data-table">
@@ -161,7 +164,13 @@ export default function DashboardView({ stats, recentLeads, onViewAllLeads, load
                         )}
                       </td>
                       <td>
-                        <span className="badge badge-emerald">📲 WhatsApp</span>
+                        {lead.bitrixLeadId ? (
+                          <span className="badge badge-blue">Bitrix Lead</span>
+                        ) : lead.bitrixContactId || lead.bitrix24ContactId ? (
+                          <span className="badge badge-emerald">📲 WhatsApp</span>
+                        ) : (
+                          <span className="badge badge-muted">Synced</span>
+                        )}
                       </td>
                       <td>
                         <span className="badge badge-emerald">

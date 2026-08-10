@@ -246,7 +246,7 @@ body {
 
 ::selection {
   background: rgba(52, 211, 153, 0.32);
-  color: #fff;
+  color: #0f172a;
 }
 
 a {
@@ -1480,6 +1480,26 @@ input:-webkit-autofill:focus {
 }
 
 .auth-demo-hint strong {
+  color: var(--accent-emerald);
+}
+
+.auth-link {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 8px;
+  font-size: 13px;
+  color: var(--text-muted);
+  text-decoration: none;
+  transition: color 0.15s ease;
+}
+
+.auth-link:hover {
   color: var(--accent-emerald);
 }
 

@@ -84,7 +84,7 @@ class ConversationService {
 
     if (b24Contact && b24Contact.ID) {
       const b24Id = Number(b24Contact.ID);
-      contact = await this.contactRepo.create({
+      contact = await this.contactRepo.upsertByWhatsappPhone(normalized, tenantId, {
         ...baseData,
         bitrix24ContactId: b24Id,
         syncStatus: SYNC_STATUS.SYNCED,
@@ -93,7 +93,7 @@ class ConversationService {
       return { contact, created: true, fromBitrix24: true };
     }
 
-    contact = await this.contactRepo.create({
+    contact = await this.contactRepo.upsertByWhatsappPhone(normalized, tenantId, {
       ...baseData,
       syncStatus: SYNC_STATUS.PENDING,
     });

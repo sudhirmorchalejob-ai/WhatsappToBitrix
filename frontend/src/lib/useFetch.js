@@ -67,7 +67,7 @@ export function useFetch(path, { token, ttl = 15000, poll = 0, skip = false } = 
   // data instantly (no skeleton flash) while it silently refreshes.
   const [data, setData] = useState(cachedFresh ? cached.data : undefined);
   const [error, setError] = useState(null);
-  const [loading, setLoading] = useState(!cachedFresh);
+  const [loading, setLoading] = useState(!cachedFresh && Boolean(path) && !skip);
   const [refreshing, setRefreshing] = useState(false);
   const requestRef = useRef(0);
 

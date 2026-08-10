@@ -118,16 +118,18 @@ model Tenant {
 }
 
 model User {
-  id           Int        @id @default(autoincrement())
-  tenantId     Int?
-  email        String     @unique @db.VarChar(255)
-  passwordHash String     @db.VarChar(255)
-  name         String     @db.VarChar(255)
-  role         UserRole   @default(ADMIN)
-  isActive     Boolean    @default(true)
-  lastLoginAt  DateTime?
-  createdAt    DateTime   @default(now())
-  updatedAt    DateTime   @updatedAt
+  id                   Int        @id @default(autoincrement())
+  tenantId             Int?
+  email                String     @unique @db.VarChar(255)
+  passwordHash         String     @db.VarChar(255)
+  name                 String     @db.VarChar(255)
+  role                 UserRole   @default(ADMIN)
+  isActive             Boolean    @default(true)
+  lastLoginAt          DateTime?
+  resetPasswordToken   String?    @db.VarChar(255)
+  resetPasswordExpires DateTime?
+  createdAt            DateTime   @default(now())
+  updatedAt            DateTime   @updatedAt
 
   tenant       Tenant?    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   activityLogs ActivityLog[]

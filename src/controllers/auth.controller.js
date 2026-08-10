@@ -37,6 +37,39 @@ class AuthController {
     }
   };
 
+  forgotPassword = async (req, res, next) => {
+    try {
+      const ipAddress = req.ip || req.headers['x-forwarded-for'] || null;
+      const result = await this.authService.requestPasswordReset({
+        email: req.body.email,
+        ipAddress,
+      });
+      res.json({
+        success: true,
+        data: result,
+      });
+    } catch (err) {
+      next(err);
+    }
+  };
+
+  resetPassword = async (req, res, next) => {
+    try {
+      const ipAddress = req.ip || req.headers['x-forwarded-for'] || null;
+      const result = await this.authService.resetPassword({
+        token: req.body.token,
+        newPassword: req.body.newPassword,
+        ipAddress,
+      });
+      res.json({
+        success: true,
+        data: result,
+      });
+    } catch (err) {
+      next(err);
+    }
+  };
+
   logout = async (req, res, next) => {
     try {
       if (req.user) {

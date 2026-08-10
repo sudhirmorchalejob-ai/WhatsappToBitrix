@@ -4,6 +4,7 @@ const { ContactRepository } = require('../repositories/contact.repository');
 const { ActivityLogRepository } = require('../repositories/activityLog.repository');
 const { BITRIX24_METHODS, SYNC_STATUS } = require('../constants');
 const { normalizePhone } = require('../helpers/phone');
+const { env } = require('../config');
 const logger = require('../utils/logger');
 
 const log = logger.childFor('sync');
@@ -23,10 +24,23 @@ const CONTACT_SELECT = [
   'DATE_MODIFY',
 ];
 
+const LEAD_SELECT = [
+  'ID',
+  'TITLE',
+  'NAME',
+  'LAST_NAME',
+  'PHONE',
+  'EMAIL',
+  'COMPANY_TITLE',
+  'STATUS_ID',
+  'DATE_CREATE',
+  'DATE_MODIFY',
+];
+
 /**
- * Pulls Bitrix24 CRM contacts into the local Contact table for a tenant.
- * Contacts are matched by Bitrix24 id first, then by normalized phone, so a
- * re-sync updates existing rows instead of duplicating them. Contacts without
+ * Pulls Bitrix24 CRM contacts AND leads into the local Contact table for a
+ * tenant. Contacts are matched by Bitrix24 id first, then by normalized phone,
+ * so a re-sync updates existing rows instead of duplicating them. Rows without
  * a usable phone number cannot be stored (whatsappPhone is required) and are
  * counted as skipped.
  */
@@ -50,13 +64,19 @@ class SyncService {
       created: 0,
       updated: 0,
       skipped: 0,
+      leadsSynced: 0,
+      leadsCreated: 0,
+      leadsUpdated: 0,
+      leadsSkipped: 0,
       error: null,
       errorCode: null,
     };
 
     try {
       const tenant = tId ? await this.tenantRepo.findById(tId) : null;
-      const b24Url = tenant && tenant.bitrix24WebhookUrl;
+      // Prefer the tenant row, but fall back to the server env so a fresh
+      // database (Docker/local) can still pull from the configured portal.
+      const b24Url = (tenant && tenant.bitrix24WebhookUrl) || env.BITRIX24_WEBHOOK_URL || null;
       if (!b24Url) {
         result.ok = false;
         result.errorCode = 'B24_NOT_CONFIGURED';
@@ -91,6 +111,33 @@ class SyncService {
         start = res && res.next ? Number(res.next) : 0;
       } while (start > 0 && fetched < limit && pages < maxPages);
 
+      // Pull Bitrix24 leads into the same Contact table so the dashboard
+      // reflects the full CRM dataset (contact-origin + lead-origin rows).
+      start = 0;
+      let leadPages = 0;
+      let leadFetched = 0;
+      do {
+        const res = await client.call(BITRIX24_METHODS.LEAD_LIST, {
+          select: LEAD_SELECT,
+          order: { ID: 'ASC' },
+          start,
+        });
+        const items = (res && res.result) || [];
+        if (!items.length) break;
+
+        for (const item of items) {
+          const outcome = await this.upsertLead(tId, item);
+          result.leadsSynced += 1;
+          if (outcome === 'created') result.leadsCreated += 1;
+          else if (outcome === 'updated') result.leadsUpdated += 1;
+          else result.leadsSkipped += 1;
+          leadFetched += 1;
+        }
+
+        leadPages += 1;
+        start = res && res.next ? Number(res.next) : 0;
+      } while (start > 0 && leadFetched < limit && leadPages < maxPages);
+
       await this.activityLogRepo.log({
         tenantId: tId,
         userId,
@@ -101,9 +148,17 @@ class SyncService {
           updated: result.updated,
           skipped: result.skipped,
           total: result.synced,
+          leadsCreated: result.leadsCreated,
+          leadsUpdated: result.leadsUpdated,
+          leadsSkipped: result.leadsSkipped,
+          leadsTotal: result.leadsSynced,
         },
         ipAddress,
       });
+
+      if (tId) {
+        await this.tenantRepo.update(tId, { lastSyncedAt: new Date() });
+      }
     } catch (err) {
       result.ok = false;
       result.errorCode = err.code || 'SYNC_FAILED';
@@ -163,12 +218,61 @@ class SyncService {
       return 'updated';
     }
 
-    await this.contactRepo.create({
-      tenantId,
-      whatsappPhone: phone,
+    // Atomic upsert on the (tenantId, whatsappPhone) unique key prevents a
+    // unique-constraint race when two sync runs overlap.
+    await this.contactRepo.upsertByWhatsappPhone(phone, tenantId, {
       ...fields,
       createdVia: 'BITRIX24_SYNC',
       bitrix24ContactId,
+    });
+    return 'created';
+  }
+
+  async upsertLead(tenantId, b24Lead) {
+    const bitrix24LeadId = Number(b24Lead.ID);
+    const phone = this.pickPhone(b24Lead.PHONE);
+    if (!phone) return 'skipped';
+
+    const firstName = this.truncate(b24Lead.NAME, 255);
+    const lastName = this.truncate(b24Lead.LAST_NAME, 255);
+    const title = this.truncate(b24Lead.TITLE, 255);
+    const name = this.truncate([firstName, lastName].filter(Boolean).join(' '), 255) || title || null;
+    const email = this.truncate(this.pickEmail(b24Lead.EMAIL), 255);
+    const company = this.truncate(b24Lead.COMPANY_TITLE, 255);
+    const meta = {
+      source: 'bitrix24-lead-pull',
+      bitrix24LeadId,
+      statusId: b24Lead.STATUS_ID || null,
+      bitrix24UpdatedAt: b24Lead.DATE_MODIFY || b24Lead.DATE_CREATE || null,
+    };
+
+    const fields = {
+      firstName,
+      lastName,
+      name,
+      email,
+      company,
+      syncStatus: SYNC_STATUS.SYNCED,
+      meta,
+    };
+
+    const existingByLead = await this.contactRepo.findByBitrix24LeadId(bitrix24LeadId, tenantId);
+    if (existingByLead) {
+      await this.contactRepo.update(existingByLead.id, fields);
+      return 'updated';
+    }
+
+    const existingByPhone = await this.contactRepo.findByWhatsappPhone(phone, tenantId);
+    if (existingByPhone) {
+      const mergedMeta = { ...(existingByPhone.meta || {}), ...meta };
+      await this.contactRepo.update(existingByPhone.id, { ...fields, meta: mergedMeta });
+      return 'updated';
+    }
+
+    await this.contactRepo.upsertByWhatsappPhone(phone, tenantId, {
+      ...fields,
+      createdVia: 'BITRIX24_SYNC',
+      bitrix24ContactId: null,
     });
     return 'created';
   }

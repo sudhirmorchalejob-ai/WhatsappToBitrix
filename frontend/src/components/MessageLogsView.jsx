@@ -13,7 +13,7 @@ export default function MessageLogsView({ token }) {
     loading,
     refreshing,
     refetch,
-  } = useFetch('/api/messages?limit=100', { token, ttl: 15000 });
+  } = useFetch('/api/messages?limit=100', { token, ttl: 15000, poll: 15000 });
 
   const messages = Array.isArray(messagesData) ? messagesData : [];
 
@@ -33,7 +33,7 @@ export default function MessageLogsView({ token }) {
       return (
         <EmptyState
           title="No messages recorded yet"
-          message="Incoming WhatsApp messages and Bitrix24 operator replies will appear here."
+          message="Incoming WhatsApp customer messages and Bitrix24 operator replies appear here automatically as they happen. Send a message from WhatsApp to your connected number to see it logged here."
         />
       );
     }

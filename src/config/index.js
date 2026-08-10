@@ -27,6 +27,15 @@ const envSchema = z.object({
     .default('false')
     .transform((v) => v === 'true'),
 
+  // Microsoft Graph (email delivery for password resets).
+  MICROSOFT_TENANT_ID: z.string().default(''),
+  MICROSOFT_CLIENT_ID: z.string().default(''),
+  MICROSOFT_CLIENT_SECRET: z.string().default(''),
+  MICROSOFT_SENDER_EMAIL: z.string().default(''),
+
+  // Public URL of the dashboard UI (used to build password-reset links).
+  FRONTEND_URL: z.string().url().default('http://localhost:9191'),
+
   RATE_LIMIT_WINDOW_MS: z.coerce.number().int().positive().default(60000),
   RATE_LIMIT_MAX: z.coerce.number().int().positive().default(300),
   WEBHOOK_RATE_LIMIT_MAX: z.coerce.number().int().positive().default(600),

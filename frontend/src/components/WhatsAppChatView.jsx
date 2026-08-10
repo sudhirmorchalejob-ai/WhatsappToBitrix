@@ -154,11 +154,11 @@ export default function WhatsAppChatView({ token }) {
     error: convError,
     refetch: refetchConversations,
     setData: setConversations,
-  } = useFetch('/api/conversations?limit=100', { token, poll: 10000, ttl: 10000 });
+  } = useFetch('/api/conversations?limit=200&includeAll=true', { token, poll: 10000, ttl: 10000 });
 
   const conversations = Array.isArray(conversationsData) ? conversationsData : [];
 
-  const messagesPath = selected ? `/api/messages?conversationId=${selected.id}&limit=200` : null;
+  const messagesPath = selected && !selected.virtual ? `/api/messages?conversationId=${selected.id}&limit=200` : null;
   const {
     data: messagesData,
     loading: msgLoading,
@@ -180,6 +180,7 @@ export default function WhatsAppChatView({ token }) {
       setSelected(conv);
       setThreadMessages([]);
       setError(null);
+      if (conv.virtual) return;
       if (conv.unreadCount > 0) {
         try {
           await fetch(`/api/conversations/${conv.id}/read`, {
@@ -204,8 +205,11 @@ export default function WhatsAppChatView({ token }) {
     setError(null);
     try {
       const phone = selected.contact?.whatsappPhone;
-      const payload = { body, conversationId: selected.id };
+      const payload = { body };
       if (phone) payload.to = phone;
+      // Virtual chats have no conversation row yet; omit conversationId so the
+      // backend creates the contact+conversation through the shared path.
+      if (!selected.virtual) payload.conversationId = selected.id;
       const res = await fetch('/api/messages/send', {
         method: 'POST',
         headers: {
@@ -219,7 +223,23 @@ export default function WhatsAppChatView({ token }) {
         throw new Error(data.message || data.error || 'Send failed');
       }
       setDraft('');
-      await refetchMessages({ force: true });
+      if (selected.virtual && data.data?.conversationId) {
+        // Promote the virtual chat to a real conversation and load its thread.
+        const realId = data.data.conversationId;
+        setSelected((prev) =>
+          prev && prev.contactId === selected.contactId
+            ? {
+                ...prev,
+                id: realId,
+                virtual: false,
+                lastMessageAt: new Date().toISOString(),
+                lastMessagePreview: body,
+                lastMessageDirection: 'OUTGOING',
+              }
+            : prev
+        );
+        await refetchMessages({ force: true });
+      }
       await refetchConversations({ force: true });
     } catch (err) {
       setError(err.message);
@@ -287,7 +307,7 @@ export default function WhatsAppChatView({ token }) {
           <div className="wa-list-body">
             {filtered.length === 0 ? (
               <div className="wa-empty">
-                No chats yet. Incoming WhatsApp messages will appear here.
+                No chats yet. Run Auto-Sync Leads to pull contacts, or send a WhatsApp message.
               </div>
             ) : (
               filtered.map((c) => {
@@ -348,8 +368,30 @@ export default function WhatsAppChatView({ token }) {
             ) : (
               <div className="wa-thread-body">
                 {messages.length === 0 && (
-                  <div className="wa-thread-placeholder">
-                    No messages in this thread yet.
+                  <div className="wa-thread-placeholder" style={{ gap: 4 }}>
+                    <Avatar name={contactName(selected.contact)} size={72} />
+                    <div style={{ fontWeight: 700, fontSize: 17, color: '#111b21', marginTop: 10 }}>
+                      {contactName(selected.contact)}
+                    </div>
+                    <div style={{ fontSize: 13, fontFamily: 'monospace', color: 'var(--wa-muted)' }}>
+                      +{selected.contact?.whatsappPhone || ''}
+                    </div>
+                    {(selected.contact?.email || selected.contact?.company) && (
+                      <div
+                        style={{
+                          fontSize: 12,
+                          color: 'var(--wa-muted)',
+                          textAlign: 'center',
+                          marginTop: 6,
+                          maxWidth: 320,
+                        }}
+                      >
+                        {[selected.contact?.email, selected.contact?.company].filter(Boolean).join(' · ')}
+                      </div>
+                    )}
+                    <div style={{ fontSize: 12.5, color: 'var(--wa-muted)', marginTop: 14, textAlign: 'center', maxWidth: 320 }}>
+                      No messages in this chat yet. Type below to send the first WhatsApp message.
+                    </div>
                   </div>
                 )}
                 {messages.map((m, idx) => {

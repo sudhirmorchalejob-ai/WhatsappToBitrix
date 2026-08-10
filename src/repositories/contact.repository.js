@@ -25,6 +25,16 @@ class ContactRepository {
     return this.prisma.contact.findFirst({ where });
   }
 
+  async findByBitrix24LeadId(bitrix24LeadId, tenantId = null) {
+    const where = {
+      meta: { path: ['bitrix24LeadId'], equals: Number(bitrix24LeadId) },
+    };
+    if (tenantId !== null && tenantId !== undefined) {
+      where.tenantId = Number(tenantId);
+    }
+    return this.prisma.contact.findFirst({ where });
+  }
+
   async findById(id) {
     return this.prisma.contact.findUnique({ where: { id: Number(id) } });
   }
@@ -44,6 +54,42 @@ class ContactRepository {
         syncStatus: data.syncStatus ?? SYNC_STATUS.PENDING,
         createdVia: data.createdVia ?? 'WHATSAPP',
         meta: data.meta ?? undefined,
+      },
+    });
+  }
+
+  async upsertByWhatsappPhone(whatsappPhone, tenantId, data) {
+    const tId = tenantId !== null && tenantId !== undefined ? Number(tenantId) : null;
+    return this.prisma.contact.upsert({
+      where: { tenantId_whatsappPhone: { tenantId: tId, whatsappPhone } },
+      create: {
+        tenantId: tId,
+        whatsappPhone,
+        firstName: data.firstName ?? null,
+        lastName: data.lastName ?? null,
+        name: data.name ?? null,
+        email: data.email ?? null,
+        company: data.company ?? null,
+        avatarUrl: data.avatarUrl ?? null,
+        bitrix24ContactId: data.bitrix24ContactId ? Number(data.bitrix24ContactId) : null,
+        syncStatus: data.syncStatus ?? SYNC_STATUS.PENDING,
+        createdVia: data.createdVia ?? 'WHATSAPP',
+        meta: data.meta ?? undefined,
+      },
+      update: {
+        ...(data.firstName !== undefined && { firstName: data.firstName }),
+        ...(data.lastName !== undefined && { lastName: data.lastName }),
+        ...(data.name !== undefined && { name: data.name }),
+        ...(data.email !== undefined && { email: data.email }),
+        ...(data.company !== undefined && { company: data.company }),
+        ...(data.avatarUrl !== undefined && { avatarUrl: data.avatarUrl }),
+        ...(data.isBlocked !== undefined && { isBlocked: data.isBlocked }),
+        ...(data.bitrix24ContactId !== undefined && {
+          bitrix24ContactId: data.bitrix24ContactId ? Number(data.bitrix24ContactId) : null,
+        }),
+        ...(data.syncStatus !== undefined && { syncStatus: data.syncStatus }),
+        ...(data.lastActivityAt !== undefined && { lastActivityAt: data.lastActivityAt }),
+        ...(data.meta !== undefined && { meta: data.meta }),
       },
     });
   }
@@ -128,6 +174,25 @@ class ContactRepository {
       _count: true,
     });
     return Object.fromEntries(groups.map((g) => [g.syncStatus, g._count]));
+  }
+
+  /**
+   * Contacts for the tenant that have no conversation yet, so the WhatsApp
+   * Chats view can show every synced contact as an (empty) chat.
+   */
+  async listWithoutConversations({ tenantId = null, excludeIds = [], limit = 50 } = {}) {
+    const where = {};
+    if (tenantId !== null && tenantId !== undefined) {
+      where.tenantId = Number(tenantId);
+    }
+    if (excludeIds && excludeIds.length) {
+      where.id = { notIn: excludeIds.map(Number) };
+    }
+    return this.prisma.contact.findMany({
+      where,
+      orderBy: { updatedAt: 'desc' },
+      take: Number(limit) || 50,
+    });
   }
 
   async findUnsynced({ statuses = ['PENDING', 'FAILED'], tenantId = null, limit = 50 } = {}) {

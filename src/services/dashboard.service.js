@@ -1,4 +1,5 @@
 const prismaClient = require('../database/prisma');
+const { Prisma } = require('@prisma/client');
 const { TenantService } = require('./tenant.service');
 const { ActivityLogRepository } = require('../repositories/activityLog.repository');
 const { WebhookLogRepository } = require('../repositories/webhookLog.repository');
@@ -19,6 +20,20 @@ class DashboardService {
   async getStats(tenantId = null) {
     const tId = tenantId !== null && tenantId !== undefined ? Number(tenantId) : null;
     const whereTenant = tId !== null ? { tenantId: tId } : {};
+    // All contacts for the tenant: WhatsApp-originated rows PLUS rows pulled in
+    // by the Bitrix24 auto-sync (createdVia = BITRIX24_SYNC).
+    const whereAll = { ...whereTenant };
+    // A contact counts as a "lead" once it is linked to a Bitrix24 entity
+    // (a CRM contact id, or a CRM lead id stored in meta).
+    const linkedLead = {
+      ...whereTenant,
+      OR: [
+        { bitrix24ContactId: { not: null } },
+        { meta: { path: ['bitrix24LeadId'], not: Prisma.DbNull } },
+      ],
+    };
+    // WhatsApp-only subset kept separate so the dashboard can still show how
+    // many leads arrived through incoming WhatsApp messages.
     const whereWhatsapp = { ...whereTenant, createdVia: 'WHATSAPP' };
 
     const todayStart = new Date();
@@ -37,7 +52,7 @@ class DashboardService {
       recentLeads,
       connectionStatus,
     ] = await Promise.all([
-      this.prisma.contact.count({ where: whereWhatsapp }),
+      this.prisma.contact.count({ where: whereAll }),
       this.prisma.conversation.count({ where: whereTenant }),
       this.prisma.conversation.count({ where: { ...whereTenant, status: 'OPEN' } }),
       this.prisma.message.count({ where: whereTenant }),
@@ -47,30 +62,31 @@ class DashboardService {
       this.prisma.autoReplyLog.count({ where: whereTenant }),
       this.prisma.contact.count({
         where: {
-          ...whereWhatsapp,
+          ...whereAll,
           createdAt: { gte: todayStart },
         },
       }),
       this.prisma.contact.findMany({
-        where: {
-          ...whereWhatsapp,
-          bitrix24ContactId: { not: null },
-        },
+        where: linkedLead,
         take: 10,
         orderBy: { createdAt: 'desc' },
       }),
       this.tenantService.testConnection(tId).catch((err) => ({ ok: false, error: err.message })),
     ]);
 
-    // Count WhatsApp-originated contacts synced to Bitrix as Total Leads
-    const totalLeads = await this.prisma.contact.count({
+    // All Bitrix-linked contacts = total leads on the dashboard.
+    const totalLeads = await this.prisma.contact.count({ where: linkedLead });
+    const todaysLeads = await this.prisma.contact.count({
+      where: { ...linkedLead, createdAt: { gte: todayStart } },
+    });
+    // WhatsApp-originated leads (synced to Bitrix24).
+    const whatsappLeads = await this.prisma.contact.count({
       where: {
         ...whereWhatsapp,
         bitrix24ContactId: { not: null },
       },
     });
-
-    const todaysLeads = await this.prisma.contact.count({
+    const todaysWhatsappLeads = await this.prisma.contact.count({
       where: {
         ...whereWhatsapp,
         bitrix24ContactId: { not: null },
@@ -89,8 +105,8 @@ class DashboardService {
         todaysLeads,
         failedMessages,
         incomingMessages,
-        leadsCreatedViaWhatsApp: totalLeads,
-        todaysWhatsAppLeads: todaysLeads,
+        leadsCreatedViaWhatsApp: whatsappLeads,
+        todaysWhatsAppLeads: todaysWhatsappLeads,
       },
       connectionStatus,
       recentLeads: recentLeads.map((c) => ({
@@ -100,6 +116,7 @@ class DashboardService {
         email: c.email,
         company: c.company,
         bitrixContactId: c.bitrix24ContactId,
+        bitrixLeadId: c.meta && c.meta.bitrix24LeadId,
         syncStatus: c.syncStatus,
         createdAt: c.createdAt,
         lastActivityAt: c.lastActivityAt,
@@ -119,10 +136,9 @@ class DashboardService {
       this.prisma.contact.findMany({
         where: {
           ...whereTenant,
-          createdVia: 'WHATSAPP',
           createdAt: { gte: startDate },
         },
-        select: { createdAt: true, bitrix24ContactId: true },
+        select: { createdAt: true, bitrix24ContactId: true, meta: true },
       }),
       this.prisma.message.findMany({
         where: {
@@ -152,7 +168,8 @@ class DashboardService {
       const day = c.createdAt.toISOString().slice(0, 10);
       if (trendMap[day]) {
         trendMap[day].customers += 1;
-        if (c.bitrix24ContactId) trendMap[day].leads += 1;
+        const linked = c.bitrix24ContactId || (c.meta && c.meta.bitrix24LeadId);
+        if (linked) trendMap[day].leads += 1;
       }
     }
 

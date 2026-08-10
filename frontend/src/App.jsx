@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import Login from './components/Login';
+import ResetPasswordView from './components/ResetPasswordView';
 import Sidebar from './components/Sidebar';
 import Header from './components/Header';
 import DashboardView from './components/DashboardView';
@@ -23,6 +24,7 @@ export default function App() {
   const [token, setToken] = useState(() => localStorage.getItem('token') || null);
   const [user, setUser] = useState(null);
   const [tenant, setTenant] = useState(null);
+  const [resetDoneEmail, setResetDoneEmail] = useState(null);
 
   const { theme, toggleTheme } = useTheme();
 
@@ -123,7 +125,7 @@ export default function App() {
         });
         setAlert({
           type: 'success',
-          text: `Auto-Sync Complete in ${formatDuration(durationSec)}! ${data.data.created} new leads created, ${data.data.updated} updated, ${data.data.skipped} skipped (${data.data.synced} total processed).`,
+          text: `Auto-Sync Complete in ${formatDuration(durationSec)}! ${data.data.created} contacts created, ${data.data.updated} updated, ${data.data.skipped} skipped (${data.data.synced} total). ${data.data.leadsCreated} leads created, ${data.data.leadsUpdated} leads updated (${data.data.leadsSynced} total).`,
         });
         await refetchStats({ force: true });
       } else {
@@ -138,9 +140,31 @@ export default function App() {
     }
   };
 
+  // Password-reset flow (arrived via the reset link in the email):
+  // show the reset form instead of the dashboard until completed.
+  const urlParams = new URLSearchParams(window.location.search);
+  const isResetView = urlParams.get('view') === 'reset';
+  const resetToken = urlParams.get('token') || '';
+
+  if (isResetView) {
+    return (
+      <ResetPasswordView
+        token={resetToken}
+        onDone={(email) => {
+          const url = new URL(window.location.href);
+          url.searchParams.delete('view');
+          url.searchParams.delete('token');
+          window.history.replaceState({}, '', url.toString());
+          setResetDoneEmail(email || null);
+          handleLogout();
+        }}
+      />
+    );
+  }
+
   // If not logged in, render Login page
   if (!token) {
-    return <Login onLoginSuccess={handleLoginSuccess} />;
+    return <Login onLoginSuccess={handleLoginSuccess} initialEmail={resetDoneEmail} />;
   }
 
   // Titles mapping
