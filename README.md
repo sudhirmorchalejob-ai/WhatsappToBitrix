@@ -146,6 +146,7 @@ It turns every incoming WhatsApp message into a deduplicated **Contact + Company
 | `POST` | `/connector/install` | Open Channels install (auto-auth into SPA via JWT) |
 | `POST` | `/connector/handler` | Open Channels message handler |
 | `GET/POST` | `/connector/app` | Open Channels app placement |
+| `POST` | `/api/bitrix24/sms` | Bitrix24 Message Service SMS provider handler (called by Bitrix24 CRM / Workflows with the provider `code`) |
 | `POST` | `/auth/login` | Login |
 | `POST` | `/auth/forgot-password` | Request reset link (emails via MS Graph) |
 | `POST` | `/auth/reset-password` | Reset password (token) |
@@ -187,6 +188,8 @@ It turns every incoming WhatsApp message into a deduplicated **Contact + Company
 | `GET/PUT/DELETE` | `/campaigns/:id` | Get / update / delete campaign |
 | `GET` | `/campaigns/segments` | Available segments |
 | `POST` | `/campaigns/:id/execute` | Run the campaign |
+| `GET/PUT` | `/sms/config` | Get / update the tenant SMS gateway config (secrets masked) |
+| `POST` | `/sms/test` | Send a test SMS through the configured gateway |
 | `GET` | `/autoReply` | Auto-reply configuration |
 | `PUT` | `/autoReply` | Update auto-reply configuration |
 
@@ -196,6 +199,7 @@ It turns every incoming WhatsApp message into a deduplicated **Contact + Company
 | `POST` | `/webhooks/whatsbox` | WhatsBox inbound (raw body + HMAC) |
 | `GET` | `/webhooks/whatsbox` | Hub challenge verification |
 | `POST` | `/webhooks/bitrix24` | Bitrix24 events (operator replies, lead mirror) |
+| `POST` | `/webhooks/sms` | SMS gateway delivery-report (DLR) callback (raw body, JSON or form-encoded) |
 
 ### Bitrix24 app endpoints
 | Method | Path | Description |
@@ -227,6 +231,24 @@ Also accepts `status` events. Signature via `x-webhook-signature` / `x-whatsbox-
 **Bitrix24 (form-encoded, event in `event` field):**
 - `ONIMCONNECTORMESSAGEADD` / `ONIMCONNECTORMESSAGEUPDATE` — operator replies to deliver to WhatsApp.
 - `ONCRMLEADADD` — campaign lead mirror (`CAMPAIGN_B24_SOURCE_ID` source filter).
+
+**Bitrix24 → SMS provider handler (`POST /api/bitrix24/sms`, JSON):**
+```json
+{
+  "module_id": "crm",
+  "type": "SMS",
+  "code": "wa_b24_sms_702773622d4c1bc40cb70b6ea16c6eef",
+  "message_id": "b24-12345",
+  "message_to": "919999876541",
+  "message_body": "Hello",
+  "properties": { "phone_number": "919999876541", "message_text": "Hello" },
+  "ts": 1710000000
+}
+```
+The provider `code` encodes the portal's `member_id` (`wa_b24_sms_<member_id>`) so the owning tenant is resolved without extra headers.
+
+**SMS gateway DLR (`POST /webhooks/sms`, raw JSON or form-encoded):**
+Delivery reports from the SMS gateway. Accepted payload shapes are gateway-agnostic (`message_id` / `provider_message_id`, `status` / `dlr` / `report`, phone + timestamp fields); unknown keys are stored whole. When `SMS_WEBHOOK_SECRET` is set the request must carry the secret (`x-sms-secret` header, `?secret=` query, or `body.secret`) or a valid HMAC-SHA256 `x-sms-signature` over the raw body.
 
 ---
 
@@ -275,15 +297,15 @@ See `.env.example` for the full commented reference.
 | `Contact` | WhatsApp contact (phones, name, company, email, `bitrix24ContactId`, `syncStatus`, `createdVia`, `meta` incl. `bitrix24LeadId`) |
 | `Conversation` | Chat session (status open/closed, provider, `phoneNumberId`, assignments) |
 | `ConversationAssignment` | Operator ↔ conversation assignments |
-| `Message` | Every message (direction, status, provider, media, error) |
-| `MessageStatus` | Provider status transitions |
+| `Message` | Every message (direction, status, provider `WHATSAPP`/`SMS`, media, error, `providerMessageId`, `bitrixMessageId`) |
+| `MessageStatus` | Provider status transitions (incl. `UNDELIVERED`) |
 | `Campaign` / `CampaignRecipient` | WhatsApp campaigns + per-recipient status |
 | `Template` | Canned reply templates (one `isDefault` per tenant) |
 | `Agent` | Operator routing config |
 | `Setting` | Per-tenant key/value settings (typed: string/number/boolean/json; secrets masked) |
-| `Install` | Bitrix24 marketplace installs (portal tokens per tenant) |
+| `Install` | Bitrix24 marketplace installs (portal tokens per tenant; registers the `messageservice` SMS provider on install) |
 | `ConnectorLineMapping` | Open-line ↔ tenant mapping |
-| `WebhookLog` | Incoming webhook audit |
+| `WebhookLog` | Incoming webhook audit (sources incl. `SMS`, Bitrix24, WhatsBox) |
 | `ActivityLog` | Audit trail (lead created, reply sent, contacts synced, auth, …) |
 | `AutoReplyLog` | Auto-reply audit |
 
@@ -297,6 +319,7 @@ See `.env.example` for the full commented reference.
 whatsappintegration/
 ├── README.md                  # This document
 ├── package.json               # Backend config & scripts
+├── render.yaml                # Render Blueprint (deploy config)
 ├── .env / .env.example        # Environment configuration
 ├── prisma/
 │   ├── schema.prisma          # Database schema
@@ -310,8 +333,10 @@ whatsappintegration/
 │   ├── routes/                # API + webhook route definitions
 │   ├── middlewares/           # auth, tenantContext, apiKeyAuth, webhookAuth, rate limiters
 │   ├── services/              # Business logic
-│   │   ├── bitrix24/          #   service, client, oauth, connector
+│   │   ├── bitrix24/          #   service, client, oauth, connector, messageProvider (SMS)
 │   │   ├── whatsbox/          #   WhatsBox provider
+│   │   ├── sms/               #   SMS gateway: config.service, sms.service, smsDelivery.service,
+│   │   │                      #   bitrix24SmsMessageHandler.service, status, providers/{generic,msg91}
 │   │   ├── conversation.service.js
 │   │   ├── customerResolver.service.js
 │   │   ├── outgoingMessage.service.js
@@ -330,9 +355,14 @@ whatsappintegration/
 │   ├── repositories/          # Prisma data-access layer
 │   ├── jobs/                  # RetryOutgoingMessagesJob, ResyncContactsJob
 │   ├── webhooks/              # Provider webhook handlers
+│   │   ├── whatsbox/          #   inbound + status handlers
+│   │   ├── bitrix24/          #   operator messages, lead mirror
+│   │   └── bitrix24Sms/       #   SMS provider payload schemas
 │   └── logs/                  # Winston combined.log / error.log
 ├── docs/
 │   ├── BITRIX24_SETUP.md      # Bitrix24 app/connector setup guide
+│   ├── BITRIX24_SMS_PROVIDER.md # "My SMS Gateway" provider + scope setup
+│   ├── DEPLOYMENT.md          # Render deployment walkthrough
 │   └── ERD.md                 # Entity relationship reference
 ├── public/                    # Compiled SPA (Express static)
 └── frontend/                  # React 19 SPA (Vite)
@@ -341,6 +371,7 @@ whatsappintegration/
         ├── App.jsx            # Tab routing (?tab= deep links)
         ├── index.css          # Dark glassmorphism theme
         ├── lib/               # useFetch, useTheme, formatDuration
+        ├── components/        # SmsConfigView (SMS Gateway tab), shared UI
         └── views/             # Login, Dashboard, Leads, Chat, Webhook Setup,
                                # Auto-Replies, Campaigns, Activity Logs, Message Logs, Reset Password
 ```
@@ -358,6 +389,7 @@ whatsappintegration/
 - **Auto-Replies** — enable/configure instant replies + template picker.
 - **Campaigns** — draft/run campaigns against segments or lists.
 - **Activity Logs / Message Logs** — audit trail + message/retry history.
+- **SMS Gateway** — configure the tenant SMS provider (provider type, API URL/key, sender id, route, template id, webhook secret), test connection, send a test SMS.
 - **Dark/Light theme** toggle; deep-linkable via `?tab=...`.
 
 ---
@@ -386,7 +418,7 @@ npx prisma migrate deploy    # apply migrations
 npx prisma generate          # regenerate client (stop the server first on Windows)
 ```
 
-> See `docs/BITRIX24_SETUP.md` for Bitrix24 marketplace/app/connector setup and `docs/ERD.md` for the schema.
+> See `docs/BITRIX24_SETUP.md` for Bitrix24 marketplace/app/connector setup, `docs/BITRIX24_SMS_PROVIDER.md` for the "My SMS Gateway" provider + required scopes, `docs/DEPLOYMENT.md` for deploying to Render, and `docs/ERD.md` for the schema.
 
 ---
 
@@ -405,6 +437,13 @@ Quick summary:
 - After deploy: reinstall the Bitrix24 app, update the WhatsBox gateway webhook
   and SMS DLR callback to `https://<app>.onrender.com/webhooks/...`, then test.
 
+> **Bitrix24 scopes:** the app needs `imopenlines, crm, im, user, placement,
+> messageservice` in its Bitrix24 app settings — and **scopes are only granted
+> at (re)install time**. If "My SMS Gateway" is missing from
+> `CRM → Settings → SMS` (Bitrix24 keeps showing the default Twilio page),
+> the scopes were never granted. Add them to the app, then reinstall the app
+> on the portal. See `docs/BITRIX24_SMS_PROVIDER.md`.
+
 ---
 
 
@@ -419,5 +458,6 @@ Quick summary:
 
 - `GET /health` — liveness + provider/DB status.
 - Webhook probes: `POST /webhooks/whatsbox` with a flat envelope (no HMAC needed while `WHATSBOX_WEBHOOK_SECRET` is empty) verifies contact + company + lead creation end-to-end.
+- SMS: `POST /api/bitrix24/sms` with a provider `code` sends via the tenant gateway; `POST /webhooks/sms` with a DLR payload flips the message status to `delivered`; dashboard **SMS Gateway** tab has Test Connection + Send Test SMS.
 - `POST /tenant/test-connection` — validates Bitrix24 webhook + WhatsApp channel credentials from the UI.
 - Admin diagnostics (`/api/admin/diagnostics`) — DB health, provider config, queue depth, manual retry trigger.

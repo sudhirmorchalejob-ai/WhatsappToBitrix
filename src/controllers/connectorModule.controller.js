@@ -146,6 +146,28 @@ class ConnectorModuleController {
    * redirect to the SPA so no manual login is needed inside Bitrix24.
    */
   async handleAppPlacement(req, res) {
+    // ================= DEBUG BLOCK (temporary, do not remove) =================
+    const safeJson = (data) => {
+      try {
+        return JSON.stringify(data, null, 2);
+      } catch (err) {
+        return String(data);
+      }
+    };
+    console.log('\n' + '='.repeat(60));
+    console.log('========== BITRIX24 APP ENDPOINT HIT ==========');
+    console.log('='.repeat(60));
+    console.log(`HTTP METHOD: ${req.method}`);
+    console.log(`FULL URL: ${req.protocol}://${req.get('host')}${req.originalUrl}`);
+    console.log('HEADERS:');
+    console.log(safeJson(req.headers));
+    console.log('QUERY PARAMS:');
+    console.log(safeJson(req.query));
+    console.log('PARSED BODY:');
+    console.log(safeJson(req.body));
+    console.log('='.repeat(60) + '\n');
+    // =========================================================================
+
     const body = req.body;
     let eventAuth = (body && body.auth) || {};
     if (typeof eventAuth === 'string') {
