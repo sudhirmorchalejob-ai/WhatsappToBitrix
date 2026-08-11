@@ -196,6 +196,8 @@ class ConversationService {
             contactId: contact.bitrix24ContactId || undefined,
             name: contact.name || contact.firstName || undefined,
             phone: contact.whatsappPhone,
+            email: contact.email || undefined,
+            company: contact.company || undefined,
             assignedById,
             sourceId: sourceId || undefined,
             comments:

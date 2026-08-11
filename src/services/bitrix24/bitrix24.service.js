@@ -40,12 +40,22 @@ const createLeadSchema = z.object({
   contactId: idSchema.optional(),
   name: z.string().max(255).optional(),
   phone: phoneSchema.optional(),
+  email: z.string().max(255).optional(),
+  company: z.string().max(255).optional(),
   assignedById: idSchema.optional(),
   statusId: z.string().max(50).optional(),
   sourceId: z.string().max(50).optional(),
   comments: z.string().max(1000).optional(),
   opportunity: z.number().nonnegative().optional(),
   currencyId: z.string().max(10).optional(),
+});
+
+const createCompanySchema = z.object({
+  title: z.string().min(1, 'Company name is required').max(255),
+  phone: phoneSchema.optional(),
+  email: z.string().max(255).optional(),
+  comments: z.string().max(1000).optional(),
+  assignedById: idSchema.optional(),
 });
 
 const timelineCommentSchema = z.object({
@@ -461,8 +471,20 @@ class Bitrix24Service {
   }
 
   async createLead(input, tenantId = null) {
-    const { title, contactId, name, phone, assignedById, statusId, sourceId, comments, opportunity, currencyId } =
-      createLeadSchema.parse(input);
+    const {
+      title,
+      contactId,
+      name,
+      phone,
+      email,
+      company,
+      assignedById,
+      statusId,
+      sourceId,
+      comments,
+      opportunity,
+      currencyId,
+    } = createLeadSchema.parse(input);
 
     const fields = {
       TITLE: title,
@@ -480,7 +502,128 @@ class Bitrix24Service {
 
     const client = await this._ensureConfigured(tenantId);
     const res = await client.call(BITRIX24_METHODS.LEAD_ADD, { fields });
-    return res.result;
+    const leadId = Number(res.result);
+
+    // Best-effort: when the customer carries a company name, find or create
+    // the Bitrix24 company and link it to the lead. A company failure must
+    // never fail the lead that was just created — it is only logged.
+    if (company && String(company).trim()) {
+      try {
+        const companyResult = await this.createCompany(
+          {
+            title: String(company).trim(),
+            phone: phone || undefined,
+            email: email || undefined,
+            assignedById: assignedById || undefined,
+            comments: comments ? `Created from WhatsApp lead #${leadId}: ${String(comments).slice(0, 900)}` : undefined,
+          },
+          tenantId
+        );
+        if (companyResult && companyResult.id) {
+          await client.call(BITRIX24_METHODS.LEAD_UPDATE, {
+            id: leadId,
+            fields: { COMPANY_ID: companyResult.id },
+          });
+          log.info('company linked to Bitrix24 lead', {
+            leadId,
+            companyId: companyResult.id,
+            companyCreated: companyResult.created,
+            title: String(company).trim(),
+          });
+        }
+      } catch (err) {
+        log.warn('company create/link failed; lead was created without a company', {
+          leadId,
+          code: err.code,
+          message: err.message,
+        });
+      }
+    }
+
+    return leadId;
+  }
+
+  // ---------------- Companies ----------------
+
+  async getCompany(id, tenantId = null) {
+    const client = await this._ensureConfigured(tenantId);
+    const res = await client.call(BITRIX24_METHODS.COMPANY_GET, { id });
+    return res.result || null;
+  }
+
+  /**
+   * Finds an existing Bitrix24 company to avoid creating duplicates.
+   * Uses B24's duplicate engine by phone first (same pattern as
+   * searchContactByPhone), then falls back to an exact TITLE filter.
+   * Returns the company object or null when nothing matches.
+   */
+  async searchCompany({ phone = null, title = null }, tenantId = null) {
+    const client = await this._ensureConfigured(tenantId);
+    let companyIds = [];
+
+    if (phone) {
+      try {
+        const dup = await client.call(BITRIX24_METHODS.DUPLICATE_FIND, {
+          entity_type: 'COMPANY',
+          type: 'PHONE',
+          values: [normalizePhone(phone)],
+        });
+        if (Array.isArray(dup.result) && dup.result.length) {
+          companyIds = dup.result;
+        }
+      } catch (err) {
+        log.warn('company duplicate.findbycomm failed, falling back to company.list', {
+          code: err.code,
+          message: err.message,
+        });
+      }
+    }
+
+    if (!companyIds.length && title) {
+      const list = await client.call(BITRIX24_METHODS.COMPANY_LIST, {
+        filter: { TITLE: String(title).trim().slice(0, 255) },
+        select: ['ID'],
+        start: -1,
+      });
+      if (list.result) companyIds = list.result.map((c) => c.ID);
+    }
+
+    for (const id of companyIds.slice(0, 5)) {
+      const company = await this.getCompany(id, tenantId);
+      if (company && company.ID) return company;
+    }
+
+    return null;
+  }
+
+  /**
+   * Creates a Bitrix24 company from customer data, reusing an existing
+   * company (matched by phone or title) so WhatsApp traffic never
+   * duplicates a company. Returns { id, created }.
+   */
+  async createCompany(input, tenantId = null) {
+    const { title, phone, email, comments, assignedById } = createCompanySchema.parse(input);
+
+    const existing = await this.searchCompany({ phone, title }, tenantId);
+    if (existing && existing.ID) {
+      log.info('reused existing Bitrix24 company', { companyId: Number(existing.ID), title });
+      return { id: Number(existing.ID), created: false };
+    }
+
+    const fields = {
+      TITLE: String(title).trim().slice(0, 255),
+      PHONE: phone ? [{ VALUE: normalizePhone(phone), VALUE_TYPE: 'WORK' }] : undefined,
+      EMAIL: email ? [{ VALUE: email, VALUE_TYPE: 'WORK' }] : undefined,
+      COMMENTS: comments || undefined,
+      ASSIGNED_BY_ID: assignedById || undefined,
+      OPENED: 'Y',
+    };
+
+    const client = await this._ensureConfigured(tenantId);
+    const res = await client.call(BITRIX24_METHODS.COMPANY_ADD, { fields });
+    const id = Number(res.result);
+    log.info('Bitrix24 company created', { companyId: id, title });
+    return { id, created: true };
   }
 
   /**
