@@ -10,6 +10,7 @@ const { TenantRepository } = require('../repositories/tenant.repository');
  */
 function createTenantChannelResolver({ tenantRepo = new TenantRepository() } = {}) {
   const cache = new Map();
+  const MAX_CACHE_SIZE = 1000;
 
   return async function resolveTenantId(channelId) {
     if (channelId === null || channelId === undefined || channelId === '') return null;
@@ -21,6 +22,10 @@ function createTenantChannelResolver({ tenantRepo = new TenantRepository() } = {
       tenantId = tenant ? tenant.id : null;
     } catch {
       tenantId = null;
+    }
+
+    if (cache.size >= MAX_CACHE_SIZE) {
+      cache.clear();
     }
     cache.set(channelId, tenantId);
     return tenantId;
