@@ -1,4 +1,5 @@
 const { env } = require('../config');
+const axios = require('axios');
 const crypto = require('crypto');
 const logger = require('../utils/logger');
 const AppError = require('../utils/AppError');
@@ -168,6 +169,19 @@ class ConnectorModuleController {
     console.log('='.repeat(60) + '\n');
     // =========================================================================
 
+    // ============ AUTO SMS PROVIDER REGISTRATION (best-effort) ============
+    // The POST placement payload carries the app OAuth AUTH_ID — use it right
+    // away to register the SMS message provider on this portal. Logs the
+    // outcome loudly, never throws into the main flow, lets the SPA redirect
+    // continue below.
+    if (req.method === 'POST' && req.body && (req.body.AUTH_ID || req.body.auth_id)) {
+      await this._registerSmsProvider({
+        authId: req.body.AUTH_ID || req.body.auth_id,
+        domain: req.body.DOMAIN || req.body.domain,
+      });
+    }
+    // ======================================================================
+
     const body = req.body;
     let eventAuth = (body && body.auth) || {};
     if (typeof eventAuth === 'string') {
@@ -251,6 +265,43 @@ class ConnectorModuleController {
     } catch (err) {
       log.warn('app placement handler failed', { error: err.message });
       return res.status(500).type('html').send(`Failed to open the app: ${err.message}`);
+    }
+  }
+
+  /**
+   * Auto-registers the SMS message provider on the portal via
+   * messageservice.sender.add, using the AUTH_ID that Bitrix24 sends in the
+   * /api/connector/app POST placement payload. Best-effort: always logs the
+   * outcome with console.log and never throws (the caller keeps its flow).
+   */
+  async _registerSmsProvider({ authId, domain }) {
+    const host = String(domain || 'crm.cupidpower.in')
+      .replace(/^https?:\/\//, '')
+      .replace(/\/+$/, '');
+    const endpoint = `https://${host}/rest/messageservice.sender.add.json`;
+    const handler = `${String(env.APP_BASE_URL || '').replace(/\/+$/, '')}/webhooks/bitrix24`;
+    const payload = {
+      auth: authId,
+      CODE: 'averlon_sms',
+      NAME: 'WhatsApp by Averlon',
+      TYPE: 'SMS',
+      HANDLER: handler,
+    };
+
+    console.log('\n========== SMS PROVIDER REGISTER (messageservice.sender.add) ==========');
+    console.log('Endpoint:', endpoint);
+    console.log('Payload:', JSON.stringify({ ...payload, auth: authId ? '[present]' : '[MISSING]' }, null, 2));
+
+    try {
+      const response = await axios.post(endpoint, payload, { timeout: 30000 });
+      console.log('SUCCESS ->', JSON.stringify(response.data));
+      console.log('========================================================================\n');
+      return response.data;
+    } catch (err) {
+      const detail = err.response ? JSON.stringify(err.response.data) : err.message;
+      console.log('FAILURE ->', detail);
+      console.log('========================================================================\n');
+      return null;
     }
   }
 
