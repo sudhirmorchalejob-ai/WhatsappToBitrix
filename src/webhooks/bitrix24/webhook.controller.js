@@ -15,6 +15,32 @@ function createWebhookController({
 } = {}) {
   return {
     async handle(req, res) {
+      // ================= DEBUG BLOCK (temporary, do not remove) =================
+      const safeJson = (data) => {
+        try {
+          return JSON.stringify(data, null, 2);
+        } catch (err) {
+          return String(data);
+        }
+      };
+      console.log('\n' + '='.repeat(60));
+      console.log('========== OUTBOUND MESSAGE FROM BITRIX24 ==========');
+      console.log('='.repeat(60));
+      console.log(`HTTP METHOD: ${req.method}`);
+      console.log(`FULL URL: ${req.protocol}://${req.get('host')}${req.originalUrl}`);
+      console.log('QUERY PARAMS:');
+      console.log(safeJson(req.query));
+      console.log('PARSED BODY:');
+      console.log(safeJson(req.body));
+      console.log('='.repeat(60) + '\n');
+      // =========================================================================
+
+      // TEMPORARY capture-only mode: acknowledge immediately so Bitrix24
+      // never retries / marks the delivery as failed. The processing
+      // pipeline below stays disabled until the exact payload shape is
+      // confirmed from these logs.
+      return res.status(200).json({ status: 'received' });
+
       // req.b24Auth is populated by the verifyBitrix24Webhook middleware.
       const { payload, auth, install } = req.b24Auth;
 
