@@ -11,6 +11,7 @@ import CampaignsView from './components/CampaignsView';
 import ActivityLogsView from './components/ActivityLogsView';
 import MessageLogsView from './components/MessageLogsView';
 import WhatsAppChatView from './components/WhatsAppChatView';
+import SmsConfigView from './components/SmsConfigView';
 import { useFetch, clearApiCache } from './lib/useFetch';
 import { formatDuration } from './lib/formatDuration';
 import { useTheme } from './lib/useTheme';
@@ -210,6 +211,11 @@ export default function App() {
           title: 'WhatsApp Campaigns',
           subtitle: 'Create, manage and launch WhatsApp marketing campaigns from Bitrix24',
         };
+      case 'sms':
+        return {
+          title: 'SMS Gateway Settings',
+          subtitle: 'Configure the “My SMS Gateway” provider used by Bitrix24 SMS sending & delivery reports',
+        };
       default:
         return { title: 'Dashboard', subtitle: '' };
     }
@@ -286,6 +292,8 @@ export default function App() {
         )}
 
         {activeTab === 'campaigns' && <CampaignsView token={token} />}
+
+        {activeTab === 'sms' && <SmsConfigView token={token} />}
       </main>
     </div>
   );

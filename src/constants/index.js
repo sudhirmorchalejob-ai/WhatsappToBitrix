@@ -26,6 +26,7 @@ const MESSAGE_STATUS = Object.freeze({
   SENT: 'SENT',
   DELIVERED: 'DELIVERED',
   READ: 'READ',
+  UNDELIVERED: 'UNDELIVERED',
   FAILED: 'FAILED',
 });
 
@@ -57,12 +58,14 @@ const CAMPAIGN_TYPE = Object.freeze({
 const PROVIDER = Object.freeze({
   WHATSAPP: 'WHATSAPP',
   BITRIX24: 'BITRIX24',
+  SMS: 'SMS',
 });
 
 const WEBHOOK_SOURCE = Object.freeze({
   WHATSBOX: 'WHATSBOX',
   META: 'META',
   BITRIX24: 'BITRIX24',
+  SMS: 'SMS',
 });
 
 const WEBHOOK_LOG_STATUS = Object.freeze({
@@ -143,6 +146,15 @@ const BITRIX24_METHODS = Object.freeze({
   IMCONNECTOR_SEND_MESSAGES: 'imconnector.send.messages',
   IMCONNECTOR_SEND_STATUS_DELIVERY: 'imconnector.send.status.delivery',
 
+  // Message Service (SMS / message providers). These methods only work in
+  // the context of an installed application (OAuth token), never with an
+  // incoming webhook.
+  MESSAGE_SERVICE_SENDER_ADD: 'messageservice.sender.add',
+  MESSAGE_SERVICE_SENDER_UPDATE: 'messageservice.sender.update',
+  MESSAGE_SERVICE_SENDER_LIST: 'messageservice.sender.list',
+  MESSAGE_SERVICE_SENDER_DELETE: 'messageservice.sender.delete',
+  MESSAGE_SERVICE_MESSAGE_STATUS_UPDATE: 'messageservice.message.status.update',
+
   // Batch
   BATCH: 'batch',
 });
@@ -170,6 +182,18 @@ const BITRIX24_EVENTS = Object.freeze({
  */
 const CAMPAIGN_B24_LEAD_PREFIX = '[WhatsApp Campaign]';
 
+/**
+ * Bitrix24 Message Service SMS provider. One provider is registered per
+ * portal with a code that encodes the portal's member_id, so the shared
+ * handler URL (`/api/bitrix24/sms`) can resolve the owning install/tenant
+ * from the incoming payload's `code` field.
+ */
+const MESSAGE_PROVIDER = Object.freeze({
+  CODE_PREFIX: 'wa_b24_sms',
+  NAME: 'My SMS Gateway',
+  TYPE: 'SMS',
+});
+
 module.exports = {
   MESSAGE_DIRECTION,
   MESSAGE_TYPE,
@@ -186,4 +210,5 @@ module.exports = {
   BITRIX24_METHODS,
   BITRIX24_EVENTS,
   CAMPAIGN_B24_LEAD_PREFIX,
+  MESSAGE_PROVIDER,
 };

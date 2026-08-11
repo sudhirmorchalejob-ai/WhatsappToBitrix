@@ -49,7 +49,7 @@ Two options — both work; the Marketplace path additionally gives you
 | Install handler URL | `https://wa-b24.example.com/api/connector/install` |
 | Handler URL | `https://wa-b24.example.com/api/connector/install` (same) |
 | Uninstall handler URL | `https://wa-b24.example.com/webhooks/bitrix24` |
-| Scope | `imopenlines, crm, im, user, placement` |
+| Scope | `imopenlines, crm, im, user, placement, messageservice` |
 | Placement | Add placement: **`DEFAULT`** with handler `https://wa-b24.example.com/api/connector/app` |
 
 3. Copy the **client id** and **secret** into `.env`
@@ -60,6 +60,12 @@ Two options — both work; the Marketplace path additionally gives you
 > Without it, `imconnector.*` calls fail with `ERROR_METHOD_NOT_FOUND` and
 > `imconnector.send.messages` fails with `WRONG_AUTH_TYPE / Application context
 > required`.
+
+> The **`messageservice` scope is required for the SMS provider** (Phase 8).
+> It lets the app register a message provider via `messageservice.sender.add`
+> and update delivery statuses via `messageservice.message.status.update`.
+> These methods only work inside an installed application (OAuth) context —
+> an incoming webhook is not sufficient.
 
 ### Option B — Marketplace app (for discoverability)
 
@@ -84,8 +90,10 @@ Two options — both work; the Marketplace path additionally gives you
    `https://wa-b24.example.com/api/connector/install` — the middleware
    exchanges the OAuth token, stores the install row in `bitrix24_installs`,
    registers the connector tile, binds the Open Channels events
-   (`ONIMCONNECTORMESSAGEADD`, `ONIMCONNECTORMESSAGEUPDATE`) and, if
-   `BITRIX24_OPENLINE_ID` is set, activates the connector on that line.
+   (`ONIMCONNECTORMESSAGEADD`, `ONIMCONNECTORMESSAGEUPDATE`), registers the
+   **SMS message provider** (`messageservice.sender.add`, code
+   `wa_b24_sms_<member_id>`) and, if `BITRIX24_OPENLINE_ID` is set, activates
+   the connector on that line.
 3. You should see the **“✓ WhatsApp Connector Installed”** page.
 
 Verify the granted scopes were stored:
@@ -156,12 +164,45 @@ The sidebar SPA includes a **Campaigns** view backed by the REST API at
 
 ---
 
-## 7. Troubleshooting
+## 7. Send SMS via the message provider (SMS Service)
+
+On install the app registers a message provider named **“My SMS Gateway”**
+(`messageservice.sender.add`, `TYPE=SMS`). Once registered it is available
+in every Bitrix24 sending scenario — CRM card **SMS/WhatsApp**, CRM
+Automation **Send SMS** rules, Workflows, and the Marketing tool.
+
+The handler URL is derived from `APP_BASE_URL`:
+`https://wa-b24.example.com/api/bitrix24/sms`. When a message is sent,
+Bitrix24 POSTs the message data to this handler; the middleware forwards it
+through the configured SMS gateway and reports the delivery status back with
+`messageservice.message.status.update`.
+
+1. Configure SMS gateway credentials (env defaults or per-tenant Settings):
+   `SMS_PROVIDER`, `SMS_API_URL`, `SMS_API_KEY`, `SMS_SENDER_ID`,
+   `SMS_ROUTE`, `SMS_TEMPLATE_ID`, `SMS_WEBHOOK_SECRET`. See
+   `docs/BITRIX24_SMS_PROVIDER.md`.
+2. In Bitrix24, open a CRM contact with a phone number → **SMS/WhatsApp** →
+   pick **My SMS Gateway** → send.
+3. The middleware stores the message (`provider=SMS`), sends it to the
+   recipient and updates the delivery status in Bitrix24 as the SMS gateway
+   reports `sent` / `delivered` / `undelivered` / `failed`.
+
+> SMS availability in the **Marketing tool** (segment broadcasts) depends on
+> the Bitrix24 plan/region and can be restricted by Bitrix24 itself — the
+> provider is registered for all scenarios, but visible entry points vary by
+> portal configuration.
+
+---
+
+## 8. Troubleshooting
 
 | Symptom | Cause | Fix |
 |---|---|---|
 | `imconnector.send.messages` → `WRONG_AUTH_TYPE "Application context required"` | Called with a webhook (login) token instead of app (OAuth) token | Uses `callAsApp` — ensure `BITRIX24_CLIENT_ID`/`SECRET` are set and the app is installed. |
 | `imconnector.*` → `ERROR_METHOD_NOT_FOUND "Method not found!"` | `imopenlines` scope missing | Add `imopenlines` to app scope, then **re-install** the app. |
+| `messageservice.*` → `ACCESS_DENIED "Application context required"` | Called with a webhook (login) token instead of the app OAuth token | Uses `callAsApp` — ensure the app is installed and `BITRIX24_CLIENT_ID`/`SECRET` are set. |
+| `messageservice.*` → `ACCESS_DENIED "Access denied!"` | `messageservice` scope not granted at install time | Add `messageservice` to app scope, then **re-install** the app. |
+| SMS provider missing from CRM SMS/WhatsApp menu | Provider not registered, or wrong portal | Re-install the app; check the install log for `messageservice.sender.add`; verify `APP_BASE_URL` is publicly reachable. |
 | `NOT_ACTIVE_LINE` | Connector not active on the chosen line | Activate from **Contact Center → WhatsApp tile**, or set `BITRIX24_OPENLINE_ID` and re-install. |
 | “Open Lines Connector module is currently disabled” | `ENABLE_OPENLINES_CONNECTOR` unset/false | Set `ENABLE_OPENLINES_CONNECTOR=true`, restart. |
 | Message appears but no chat in Contact Center | Connector data (`chat.id`) not set for the line | Re-activate the line; the middleware calls `imconnector.connector.data.set`. |
@@ -170,7 +211,7 @@ The sidebar SPA includes a **Campaigns** view backed by the REST API at
 
 ---
 
-## 8. Relevant endpoints (summary)
+## 9. Relevant endpoints (summary)
 
 | Endpoint | Purpose |
 |---|---|
@@ -178,4 +219,7 @@ The sidebar SPA includes a **Campaigns** view backed by the REST API at
 | `GET/POST /api/connector/app` | LEFT_MENU placement iframe handler (auto-login to SPA). |
 | `POST /webhooks/bitrix24` | Open Channels event handler (operator replies). |
 | `POST /webhooks/whatsbox` | Incoming WhatsApp webhook. |
+| `POST /api/bitrix24/sms` | Bitrix24 Message Service handler (SMS provider callback). |
+| `POST /webhooks/sms` | SMS gateway delivery-status webhook. |
+| `GET/PUT /api/sms/config`, `POST /api/sms/test` | SMS gateway configuration + connection test (dashboard). |
 | `/api/campaigns` | Campaign REST API (CRUD + `POST /:id/execute`). |

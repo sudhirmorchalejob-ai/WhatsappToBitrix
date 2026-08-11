@@ -118,6 +118,15 @@ class InstallRepository {
     return this.prisma.install.findFirst({ where: { memberId } });
   }
 
+  /** Most recent active install for a tenant (used to report SMS delivery). */
+  async findByTenantId(tenantId) {
+    if (tenantId === null || tenantId === undefined) return null;
+    return this.prisma.install.findFirst({
+      where: { tenantId: Number(tenantId), status: INSTALL_STATUS.INSTALLED },
+      orderBy: { updatedAt: 'desc' },
+    });
+  }
+
   async findActiveMostRecent() {
     return this.prisma.install.findFirst({
       where: { status: INSTALL_STATUS.INSTALLED },

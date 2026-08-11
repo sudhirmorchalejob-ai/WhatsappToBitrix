@@ -9,8 +9,8 @@ const notFound = require('./middlewares/notFound');
 const errorHandler = require('./middlewares/errorHandler');
 const routes = require('./routes');
 const webhookRoutes = require('./routes/webhook.route');
-const metaWebhookRoutes = require('./routes/metaWebhook.route');
 const bitrix24WebhookRoutes = require('./routes/bitrix24Webhook.route');
+const smsWebhookRoutes = require('./routes/smsWebhook.route');
 const bitrix24AppRoutes = require('./routes/bitrix24App.route');
 const healthRoute = require('./routes/health.route');
 
@@ -55,8 +55,8 @@ function createApp() {
   );
 
   app.use('/webhooks', webhookRoutes);
-  app.use('/webhooks', metaWebhookRoutes);
   app.use('/webhooks', bitrix24WebhookRoutes);
+  app.use('/webhooks', smsWebhookRoutes);
 
   // Bitrix24 marketplace app lifecycle (public).
   app.use('/', bitrix24AppRoutes);

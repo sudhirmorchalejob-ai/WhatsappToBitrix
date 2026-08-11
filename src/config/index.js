@@ -54,16 +54,18 @@ const envSchema = z.object({
   // Default WhatsApp webhook URL used for a tenant when none is saved.
   WHATSAPP_WEBHOOK_URL: z.string().default(''),
 
-  META_API_BASE_URL: z.string().url().default('https://graph.facebook.com'),
-  META_GRAPH_VERSION: z.string().default('v21.0'),
-  META_ACCESS_TOKEN: z.string().default(''),
-  META_PHONE_NUMBER_ID: z.string().default(''),
-  META_APP_ID: z.string().default(''),
-  META_APP_SECRET: z.string().default(''),
-  META_WEBHOOK_VERIFY_TOKEN: z.string().default(''),
-
   BITRIX24_WEBHOOK_URL: z.string().default(''),
   BITRIX24_WEBHOOK_SECRET: z.string().default(''),
+
+  // SMS gateway defaults. Tenants can override each key through the
+  // /api/sms/config endpoint (stored as isSecret Settings where relevant).
+  SMS_PROVIDER: z.string().default('generic'),
+  SMS_API_URL: z.string().default(''),
+  SMS_API_KEY: z.string().default(''),
+  SMS_SENDER_ID: z.string().default(''),
+  SMS_ROUTE: z.string().default(''),
+  SMS_TEMPLATE_ID: z.string().default(''),
+  SMS_WEBHOOK_SECRET: z.string().default(''),
 
   // Marketplace app / OAuth. `BITRIX24_MEMBER_ID` pins the middleware to
   // a single portal in dev; leave empty to use the most recent install.
@@ -122,6 +124,15 @@ if (!parsed.success) {
 }
 
 const env = parsed.data;
+
+// Hosting platforms auto-provide the public app URL (Render, Railway…).
+// When APP_BASE_URL is not set explicitly, fall back to it so every
+// handler URL (Bitrix24 uninstall, Open Channels, SMS provider) works
+// out of the box after deploy.
+env.APP_BASE_URL = env.APP_BASE_URL || process.env.RENDER_EXTERNAL_URL || process.env.RAILWAY_PUBLIC_DOMAIN || '';
+if (env.APP_BASE_URL && env.APP_BASE_URL.startsWith('https://') === false && env.APP_BASE_URL.startsWith('http://') === false) {
+  env.APP_BASE_URL = `https://${env.APP_BASE_URL}`;
+}
 
 module.exports = {
   env,

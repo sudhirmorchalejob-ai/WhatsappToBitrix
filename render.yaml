@@ -1,0 +1,77 @@
+# Render Blueprint — WhatsApp <-> Bitrix24 middleware
+# ----------------------------------------------------
+# Deploy: push this repo to GitHub, then in Render -> "New" -> "Blueprint"
+# and select the repo (or use the "Deploy to Render" button).
+#
+# IMPORTANT: use the paid "starter" plan (or higher). The free web tier
+# sleeps after ~15 min of inactivity and would DROP webhook deliveries
+# from Bitrix24 / WhatsBox / the SMS gateway while asleep.
+services:
+  - type: web
+    name: whatsapp-bitrix-middleware
+    runtime: node
+    plan: starter
+    # Pick the region closest to your Bitrix24 portal / WhatsApp gateway:
+    #   ohio, oregon, frankfurt, singapore
+    region: singapore
+    buildCommand: npm ci && npm run build:frontend
+    startCommand: npx prisma migrate deploy && node src/server.js
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: TRUST_PROXY
+        value: "true"
+      - key: LOG_FILE_ENABLED
+        value: "false"
+      # APP_BASE_URL is auto-fallen-back to your Render URL; set it here
+      # ONLY if you later use a custom domain:
+      - key: APP_BASE_URL
+        value: ""
+      # ---- Fill these in the Render dashboard (secret / per-project) ----
+      - key: DATABASE_URL
+        sync: false
+      - key: WHATSBOX_API_URL
+        sync: false
+      - key: WHATSBOX_API_KEY
+        sync: false
+      - key: WHATSBOX_CHANNEL_ID
+        sync: false
+      - key: WHATSBOX_WEBHOOK_SECRET
+        sync: false
+      - key: WHATSAPP_WEBHOOK_URL
+        sync: false
+      - key: BITRIX24_WEBHOOK_URL
+        sync: false
+      - key: BITRIX24_WEBHOOK_SECRET
+        sync: false
+      - key: BITRIX24_CLIENT_ID
+        sync: false
+      - key: BITRIX24_CLIENT_SECRET
+        sync: false
+      - key: MICROSOFT_TENANT_ID
+        sync: false
+      - key: MICROSOFT_CLIENT_ID
+        sync: false
+      - key: MICROSOFT_CLIENT_SECRET
+        sync: false
+      - key: MICROSOFT_SENDER_EMAIL
+        sync: false
+      - key: API_KEYS
+        sync: false
+      # Optional global SMS defaults (or set them per-tenant in the
+      # dashboard under SMS Gateway instead):
+      - key: SMS_PROVIDER
+        value: generic
+      - key: SMS_API_URL
+        value: ""
+      - key: SMS_API_KEY
+        value: ""
+      - key: SMS_SENDER_ID
+        value: ""
+      - key: SMS_ROUTE
+        value: ""
+      - key: SMS_TEMPLATE_ID
+        value: ""
+      - key: SMS_WEBHOOK_SECRET
+        value: ""

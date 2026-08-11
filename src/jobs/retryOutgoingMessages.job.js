@@ -1,10 +1,10 @@
 const logger = require('../utils/logger');
 const { env } = require('../config');
-const { MESSAGE_TYPE, MESSAGE_STATUS, WEBHOOK_SOURCE } = require('../constants');
+const { MESSAGE_TYPE, MESSAGE_STATUS, WEBHOOK_SOURCE, PROVIDER } = require('../constants');
 const { MessageRepository, MessageStatusRepository, ActivityLogRepository } = require('../repositories');
 const { CampaignRepository } = require('../repositories/campaign.repository');
 const { WhatsBoxService } = require('../services/whatsbox');
-const { MetaService } = require('../services/meta');
+const { SmsService, SmsConfigService } = require('../services/sms');
 const { ConversationService } = require('../services/conversation.service');
 const AppError = require('../utils/AppError');
 
@@ -28,17 +28,17 @@ const TYPE_TO_WHATSBOX = Object.freeze({
  * and surfaced to the admin diagnostics endpoint instead of hammering
  * the provider.
  *
- * The send is provider-aware: the conversation's stored provider
- * (WHATSBOX/META) decides which service sends the message, so operator
- * replies are retried over the same WhatsApp provider they were
- * originally delivered through.
+ * The send is provider-aware between WhatsApp (always the WhatsBox
+ * gateway) and SMS: operator replies and campaign sends are retried over
+ * the same WhatsApp gateway they were originally delivered through.
  */
 class RetryOutgoingMessagesJob {
   constructor({
     messageRepo = new MessageRepository(),
     messageStatusRepo = new MessageStatusRepository(),
     whatsbox = new WhatsBoxService(),
-    meta = new MetaService(),
+    sms = new SmsService(),
+    smsConfig = new SmsConfigService(),
     conversationService = new ConversationService(),
     activityLogRepo = null,
     campaignRepository = new CampaignRepository(),
@@ -48,7 +48,8 @@ class RetryOutgoingMessagesJob {
     this.messageRepo = messageRepo;
     this.messageStatusRepo = messageStatusRepo;
     this.whatsbox = whatsbox;
-    this.meta = meta;
+    this.sms = sms;
+    this.smsConfig = smsConfig;
     this.conversationService = conversationService;
     this.activityLogRepo = activityLogRepo;
     this.campaignRepository = campaignRepository;
@@ -82,8 +83,8 @@ class RetryOutgoingMessagesJob {
   async run({ limit = 50, maxRetries = this.maxRetries, olderThanMinutes = 2 } = {}) {
     if (this.running) return { scanned: 0, skipped: true, reason: 'already-running' };
     // Never burn retry budget while every provider is simply unconfigured.
-    const anyProviderConfigured = Boolean(env.WHATSBOX_API_URL) ||
-      (env.META_ACCESS_TOKEN && env.META_PHONE_NUMBER_ID);
+    const smsConfigured = await this.smsConfig.isGloballyConfigured().catch(() => false);
+    const anyProviderConfigured = Boolean(env.WHATSBOX_API_URL) || smsConfigured;
     if (!anyProviderConfigured) {
       return { scanned: 0, skipped: true, reason: 'no-provider-configured' };
     }
@@ -154,16 +155,16 @@ class RetryOutgoingMessagesJob {
   }
 
   /**
-   * Stores the provider id in the column matching the provider: the Meta
-   * wamid, or the WhatsBox message id. The whatsboxMessageId column stays
-   * reserved for the inbound dedup id, so an operator reply's payload id
-   * (b24:...) is never clobbered.
+   * Stores the provider id in the column matching the provider: the
+   * WhatsBox message id for WhatsApp, or the SMS provider message id. The
+   * whatsboxMessageId column stays reserved for the inbound dedup id, so
+   * an operator reply's payload id (b24:...) is never clobbered.
    */
   async _backfillProviderId(message, result) {
-    if (this._isMeta(message)) {
+    if (this._isSms(message)) {
       return this.conversationService.updateOutgoingMessageId({
         id: message.id,
-        wamid: result.wamid || null,
+        providerMessageId: result.providerMessageId || null,
       });
     }
     return this.conversationService.updateOutgoingMessageId({
@@ -172,8 +173,10 @@ class RetryOutgoingMessagesJob {
     });
   }
 
-  _isMeta(message) {
-    return String(message.conversation.provider || WEBHOOK_SOURCE.WHATSBOX).toUpperCase() === WEBHOOK_SOURCE.META;
+  _isSms(message) {
+    const provider = String(message.provider || (message.conversation && message.conversation.provider) || '')
+      .toUpperCase();
+    return provider === PROVIDER.SMS || provider === WEBHOOK_SOURCE.SMS;
   }
 
   async _send(message) {
@@ -181,24 +184,13 @@ class RetryOutgoingMessagesJob {
     const isText = message.type === MESSAGE_TYPE.TEXT && Boolean(message.body);
     const mediaType = TYPE_TO_WHATSBOX[message.type];
     const channelId = message.conversation.channelNumber || env.WHATSBOX_CHANNEL_ID || undefined;
-    const phoneNumberId = message.conversation.phoneNumberId || env.META_PHONE_NUMBER_ID || undefined;
 
-    if (this._isMeta(message)) {
-      if (isText) return this.meta.sendText({ to, body: message.body, phoneNumberId });
-      if (!mediaType) {
-        throw new AppError('Message type cannot be retried via media API', 400, null, 'UNRETRIABLE_TYPE');
+    if (this._isSms(message)) {
+      if (!isText) {
+        throw new AppError('Media messages cannot be retried via the SMS provider', 400, null, 'UNRETRIABLE_SMS_TYPE');
       }
-      if (!message.mediaUrl) {
-        throw new AppError('Media message has no mediaUrl to resend', 400, null, 'NO_MEDIA_URL');
-      }
-      return this.meta.sendMedia({
-        to,
-        type: mediaType,
-        link: message.mediaUrl,
-        caption: message.caption,
-        filename: message.mediaName,
-        phoneNumberId,
-      });
+      const tenantId = message.tenantId || (message.conversation && message.conversation.tenantId) || null;
+      return this.sms.sendText(tenantId, { to, body: message.body });
     }
 
     if (isText) return this.whatsbox.sendText({ to, body: message.body, channelId });

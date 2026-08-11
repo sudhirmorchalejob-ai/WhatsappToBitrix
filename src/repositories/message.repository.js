@@ -42,6 +42,24 @@ class MessageRepository {
     return this.prisma.message.findFirst({ where });
   }
 
+  async findByProviderMessageId(providerMessageId, tenantId = null) {
+    if (!providerMessageId) return null;
+    const where = { providerMessageId: String(providerMessageId) };
+    if (tenantId !== null && tenantId !== undefined) {
+      where.tenantId = Number(tenantId);
+    }
+    return this.prisma.message.findFirst({ where });
+  }
+
+  async findByBitrixMessageId(bitrixMessageId, tenantId = null) {
+    if (!bitrixMessageId) return null;
+    const where = { bitrixMessageId: String(bitrixMessageId) };
+    if (tenantId !== null && tenantId !== undefined) {
+      where.tenantId = Number(tenantId);
+    }
+    return this.prisma.message.findFirst({ where });
+  }
+
   async create(data) {
     return this.prisma.message.create({
       data: {
@@ -52,6 +70,9 @@ class MessageRepository {
         campaignId: data.campaignId ? Number(data.campaignId) : null,
         whatsboxMessageId: data.whatsboxMessageId ?? null,
         wamid: data.wamid ?? null,
+        provider: data.provider ?? 'WHATSAPP',
+        providerMessageId: data.providerMessageId ?? null,
+        bitrixMessageId: data.bitrixMessageId ?? null,
         direction: data.direction,
         type: data.type,
         body: data.body ?? null,
@@ -75,6 +96,9 @@ class MessageRepository {
       data: {
         ...(data.whatsboxMessageId !== undefined && { whatsboxMessageId: data.whatsboxMessageId }),
         ...(data.wamid !== undefined && { wamid: data.wamid }),
+        ...(data.provider !== undefined && { provider: data.provider }),
+        ...(data.providerMessageId !== undefined && { providerMessageId: data.providerMessageId }),
+        ...(data.bitrixMessageId !== undefined && { bitrixMessageId: data.bitrixMessageId }),
         ...(data.leadId !== undefined && { leadId: data.leadId ? Number(data.leadId) : null }),
         ...(data.status !== undefined && { status: data.status }),
         ...(data.error !== undefined && { error: data.error }),

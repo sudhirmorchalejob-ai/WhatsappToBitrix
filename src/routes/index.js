@@ -16,6 +16,8 @@ const campaignRoute = require('./campaign.route');
 const autoReplyRoute = require('./autoReply.route');
 
 const connectorRoute = require('./connector.route');
+const bitrix24SmsRoute = require('./bitrix24Sms.route');
+const smsRoute = require('./sms.route');
 
 const router = Router();
 
@@ -24,6 +26,9 @@ router.use('/health', healthRoute);
 
 // Public Open Lines connector endpoints (Bitrix24 iframe & OAuth callbacks)
 router.use('/connector', connectorRoute);
+
+// Public Bitrix24 Message Service SMS provider handler (POST /api/bitrix24/sms)
+router.use('/bitrix24', bitrix24SmsRoute);
 
 // Auth endpoints (login, me, logout)
 router.use('/auth', authRoute);
@@ -46,5 +51,6 @@ router.use('/agents', agentRoute);
 router.use('/templates', templateRoute);
 router.use('/campaigns', campaignRoute);
 router.use('/auto-replies', autoReplyRoute);
+router.use('/sms', smsRoute);
 
 module.exports = router;

@@ -3,6 +3,9 @@
   "version": "1.0.0",
   "description": "Internal WhatsApp to Bitrix24 CRM middleware using the WhatsBox API",
   "private": true,
+  "engines": {
+    "node": ">=20.0.0"
+  },
   "main": "src/server.js",
   "scripts": {
     "start": "node src/server.js",

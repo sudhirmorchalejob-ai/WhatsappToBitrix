@@ -9,7 +9,6 @@ const { mediaTypeFromMime } = require('../../../helpers/media');
 const { ConversationService } = require('../../../services/conversation.service');
 const { Bitrix24Service } = require('../../../services/bitrix24');
 const { WhatsBoxService } = require('../../../services/whatsbox');
-const { MetaService } = require('../../../services/meta');
 const {
   MessageRepository,
   ConversationRepository,
@@ -34,7 +33,7 @@ const log = logger.childFor('webhook-b24-operator');
  *
  * Flow: dedup -> pin portal -> rotate tokens -> ensure agent -> link
  * conversation -> save OUTGOING message (PENDING) -> send the reply to
- * the customer over the conversation's WhatsApp provider -> advance the
+ * the customer over the WhatsApp gateway (WhatsBox) -> advance the
  * message to SENT (or FAILED for the retry job) -> confirm delivery to
  * B24.
  *
@@ -51,7 +50,6 @@ class OperatorMessageHandler {
     activityLogRepo = new ActivityLogRepository(),
     bitrix24 = new Bitrix24Service(),
     whatsbox = new WhatsBoxService(),
-    meta = new MetaService(),
   } = {}) {
     this.service = conversationService;
     this.messageRepo = messageRepo;
@@ -61,7 +59,6 @@ class OperatorMessageHandler {
     this.activityLogRepo = activityLogRepo;
     this.bitrix24 = bitrix24;
     this.whatsbox = whatsbox;
-    this.meta = meta;
   }
 
   async handle(canonical, { install, auth } = {}) {
@@ -288,12 +285,12 @@ class OperatorMessageHandler {
   }
 
   /**
-   * Sends the operator reply to the customer over the same WhatsApp
-   * provider the customer's messages came in on (stored on the
-   * conversation). Handles text and attachments: an attachment wins and
-   * the text is sent as its caption. Never throws: any failure is
-   * returned as { ok: false } so the message stays retryable and the
-   * delivery confirmation to Bitrix24 still fires.
+   * Sends the operator reply to the customer over the WhatsApp gateway
+   * (WhatsBox webhook — the only WhatsApp provider this app uses). Handles
+   * text and attachments: an attachment wins and the text is sent as its
+   * caption. Never throws: any failure is returned as { ok: false } so the
+   * message stays retryable and the delivery confirmation to Bitrix24
+   * still fires.
    */
   async _sendOperatorReply(conversation, content) {
     const to = conversation.contact && conversation.contact.whatsappPhone;
@@ -301,50 +298,32 @@ class OperatorMessageHandler {
       return { ok: false, provider: 'NONE', error: 'contact-has-no-whatsapp-number' };
     }
 
-    const provider = String(conversation.provider || 'WHATSBOX').toUpperCase();
+    const provider = 'WHATSBOX';
     try {
       if (content.media) {
         if (!content.media.link) {
           return { ok: false, provider, error: 'attachment-has-no-download-link' };
         }
-        const mediaInput = {
+        const result = await this.whatsbox.sendMedia({
           to,
           type: content.media.providerType,
           link: content.media.link,
           caption: content.caption || undefined,
           filename: content.media.name || undefined,
-        };
-        if (provider === 'META') {
-          const result = await this.meta.sendMedia({
-            ...mediaInput,
-            phoneNumberId: conversation.phoneNumberId || undefined,
-          });
-          return { ok: true, provider: 'META', wamid: result.wamid, raw: result.raw };
-        }
-        const result = await this.whatsbox.sendMedia({
-          ...mediaInput,
           channelId: conversation.channelNumber || undefined,
         });
-        return { ok: true, provider: 'WHATSBOX', whatsboxMessageId: result.whatsboxMessageId, raw: result.raw };
+        return { ok: true, provider, whatsboxMessageId: result.whatsboxMessageId, raw: result.raw };
       }
 
       if (!content.body) {
         return { ok: false, provider: 'NONE', error: 'reply-has-no-sendable-content' };
-      }
-      if (provider === 'META') {
-        const result = await this.meta.sendText({
-          to,
-          body: content.body,
-          phoneNumberId: conversation.phoneNumberId || undefined,
-        });
-        return { ok: true, provider: 'META', wamid: result.wamid, raw: result.raw };
       }
       const result = await this.whatsbox.sendText({
         to,
         body: content.body,
         channelId: conversation.channelNumber || undefined,
       });
-      return { ok: true, provider: 'WHATSBOX', whatsboxMessageId: result.whatsboxMessageId, raw: result.raw };
+      return { ok: true, provider, whatsboxMessageId: result.whatsboxMessageId, raw: result.raw };
     } catch (err) {
       log.warn('operator reply provider send failed', {
         provider,

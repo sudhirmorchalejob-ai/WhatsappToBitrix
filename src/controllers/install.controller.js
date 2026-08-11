@@ -3,7 +3,11 @@ const logger = require('../utils/logger');
 const AppError = require('../utils/AppError');
 const { InstallRepository } = require('../repositories');
 const { WebhookLogRepository } = require('../repositories');
-const { Bitrix24Service, Bitrix24ConnectorService } = require('../services/bitrix24');
+const {
+  Bitrix24Service,
+  Bitrix24ConnectorService,
+  Bitrix24MessageProviderService,
+} = require('../services/bitrix24');
 const { WEBHOOK_SOURCE, WEBHOOK_LOG_STATUS, BITRIX24_EVENTS } = require('../constants');
 const { b24InstallPage } = require('../utils/b24InstallPage');
 
@@ -32,11 +36,13 @@ class InstallController {
     webhookLogRepo = new WebhookLogRepository(),
     bitrix24Service = new Bitrix24Service(),
     connectorService = new Bitrix24ConnectorService(),
+    messageProvider = new Bitrix24MessageProviderService(),
   } = {}) {
     this.installRepo = installRepo;
     this.webhookLogRepo = webhookLogRepo;
     this.bitrix24 = bitrix24Service;
     this.connector = connectorService;
+    this.messageProvider = messageProvider;
   }
 
   async _postInstall({ auth, eventType, payload, ip }) {
@@ -80,6 +86,7 @@ class InstallController {
       log.warn('event binding failed', { memberId: install.memberId, code: err.code, message: err.message });
     }
     await this._provisionConnector(install.memberId);
+    await this._provisionMessageProvider(install.memberId);
 
     return install;
   }
@@ -94,6 +101,29 @@ class InstallController {
       return summary;
     } catch (err) {
       log.warn('connector provisioning failed', { memberId, code: err.code, message: err.message });
+      return null;
+    }
+  }
+
+  /**
+   * Registers the Message Service SMS provider (best-effort). A failure
+   * here must never break the app install — Bitrix24 only grants scopes at
+   * install time, so this runs on every (re-)install.
+   */
+  async _provisionMessageProvider(memberId) {
+    try {
+      const summary = await this.messageProvider.register(memberId);
+      if (!summary.ok) {
+        log.warn('message provider registration incomplete', {
+          memberId,
+          code: summary.code,
+          error: summary.error,
+          errorCode: summary.errorCode,
+        });
+      }
+      return summary;
+    } catch (err) {
+      log.warn('message provider registration failed', { memberId, code: err.code, message: err.message });
       return null;
     }
   }
@@ -114,6 +144,7 @@ class InstallController {
       log.warn('event binding failed', { memberId: install.memberId, code: err.code, message: err.message });
     }
     await this._provisionConnector(install.memberId);
+    await this._provisionMessageProvider(install.memberId);
 
     res.status(200).send(
       b24InstallPage({
@@ -188,6 +219,10 @@ class InstallController {
         status: WEBHOOK_LOG_STATUS.PROCESSED,
         ip: req.ip,
       });
+
+      if (this.messageProvider) {
+        await this.messageProvider.unregister(memberId).catch(() => {});
+      }
 
       if (this.bitrix24.oauthCtx && this.bitrix24.oauthCtx.memberId === memberId) {
         this.bitrix24.oauthCtx = null;

@@ -8,6 +8,7 @@ import {
   Webhook,
   Bot,
   Send,
+  Smartphone,
   LogOut,
   Menu,
   X,
@@ -29,6 +30,7 @@ export default function Sidebar({ activeTab, setActiveTab, user, onLogout, theme
     { id: 'webhooks', label: 'Webhook Setup', icon: Webhook },
     { id: 'autoreplies', label: 'Auto Replies', icon: Bot },
     { id: 'campaigns', label: 'Campaigns', icon: Send },
+    { id: 'sms', label: 'SMS Gateway', icon: Smartphone },
   ];
 
   const selectTab = (id) => {

@@ -37,6 +37,7 @@ enum MessageState {
   SENT
   DELIVERED
   READ
+  UNDELIVERED
   FAILED
 }
 
@@ -56,6 +57,7 @@ enum WebhookSource {
   WHATSBOX
   META
   BITRIX24
+  SMS
 }
 
 enum CampaignStatus {
@@ -235,6 +237,12 @@ model Message {
   campaignId        Int?
   whatsboxMessageId String?         @db.VarChar(255)
   wamid             String?         @db.VarChar(255)
+  // Delivery channel: WHATSAPP (default) or SMS.
+  provider          String          @default("WHATSAPP") @db.VarChar(20)
+  // External id returned by the SMS gateway (MSG91 msgid / generic id).
+  providerMessageId String?         @db.VarChar(255)
+  // Bitrix24 Message Service message_id (from the SMS provider handler).
+  bitrixMessageId   String?         @db.VarChar(255)
   direction         MessageDirection
   type              MessageType     @default(UNKNOWN)
   body              String?         @db.Text
@@ -266,6 +274,8 @@ model Message {
   @@index([contactId, timestamp])
   @@index([campaignId])
   @@index([status])
+  @@index([provider])
+  @@index([providerMessageId])
 
   @@map("messages")
 }

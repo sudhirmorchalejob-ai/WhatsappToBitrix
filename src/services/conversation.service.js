@@ -20,6 +20,7 @@ const STATUS_ORDER = {
   [MESSAGE_STATUS.PENDING]: 0,
   [MESSAGE_STATUS.SENT]: 1,
   [MESSAGE_STATUS.DELIVERED]: 2,
+  [MESSAGE_STATUS.UNDELIVERED]: 2,
   [MESSAGE_STATUS.READ]: 3,
 };
 
@@ -277,6 +278,9 @@ class ConversationService {
     contactCard = null,
     whatsboxMessageId = null,
     wamid = null,
+    provider = 'WHATSAPP',
+    providerMessageId = null,
+    bitrixMessageId = null,
     payload = null,
     timestamp = new Date(),
     status = MESSAGE_STATUS.PENDING,
@@ -298,6 +302,9 @@ class ConversationService {
       campaignId: campaignId ? Number(campaignId) : null,
       whatsboxMessageId,
       wamid,
+      provider,
+      providerMessageId,
+      bitrixMessageId,
       direction,
       type,
       body,
@@ -338,10 +345,12 @@ class ConversationService {
     return message;
   }
 
-  async updateOutgoingMessageId({ id, whatsboxMessageId = null, wamid = null }) {
+  async updateOutgoingMessageId({ id, whatsboxMessageId = null, wamid = null, providerMessageId = null, bitrixMessageId = null }) {
     return this.messageRepo.update(id, {
       ...(whatsboxMessageId && { whatsboxMessageId }),
       ...(wamid && { wamid }),
+      ...(providerMessageId && { providerMessageId }),
+      ...(bitrixMessageId && { bitrixMessageId }),
     });
   }
 
@@ -357,10 +366,12 @@ class ConversationService {
 
     let shouldUpdateMain = false;
     if (existing.status === MESSAGE_STATUS.READ || existing.status === MESSAGE_STATUS.DELIVERED) {
-      if (status !== MESSAGE_STATUS.FAILED && targetOrd > currentOrd) {
+      // Never downgrade an already delivered/read message, except to a
+      // terminal failure/undelivered state (used by SMS delivery reports).
+      if (status === MESSAGE_STATUS.FAILED || status === MESSAGE_STATUS.UNDELIVERED || targetOrd > currentOrd) {
         shouldUpdateMain = true;
       }
-    } else if (status === MESSAGE_STATUS.FAILED || targetOrd > currentOrd) {
+    } else if (status === MESSAGE_STATUS.FAILED || status === MESSAGE_STATUS.UNDELIVERED || targetOrd > currentOrd) {
       shouldUpdateMain = true;
     }
 

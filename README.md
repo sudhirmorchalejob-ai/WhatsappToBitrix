@@ -1,6 +1,6 @@
 # 💬 WhatsApp → Bitrix24 Lead Integration & 2-Way Dashboard
 
-A multi-tenant production integration platform between **WhatsApp (WhatsBox / Meta Cloud API Gateway)** and **Bitrix24 CRM**.
+A multi-tenant production integration platform between **WhatsApp (WhatsBox Gateway webhook)** and **Bitrix24 CRM**.
 
 It turns every incoming WhatsApp message into a deduplicated **Contact + Company + Lead** in Bitrix24, gives operators a full **2-way messaging channel inside Bitrix24 (Open Channels / Contact Center)**, and layers on auto-replies, reply templates, WhatsApp campaigns, operator routing, contact sync, message retries, audit logs, and a **React SPA dashboard** for tenants.
 
@@ -19,13 +19,14 @@ It turns every incoming WhatsApp message into a deduplicated **Contact + Company
 | 7 | **Segment Catalog** | ~14 built-in segments (all clients/leads, active deals, won/lost deals, birthdays in 5 days, marketing-centre seasonal lists, …). |
 | 8 | **Operator Routing** | Auto-assign incoming chats to the least-loaded or longest-waiting operator; supervisor exclusion + per-agent caps. |
 | 9 | **Contact Sync & Resync** | Pull Bitrix24 contacts + leads into local DB (`syncNow` / auto-sync), and a background job pushes locally-created contacts back up to Bitrix24. |
-| 10 | **Outbound Message Retry** | Background job retries PENDING/FAILED outgoing messages (provider-aware for WhatsBox & Meta) with a max-attempt budget. |
+| 10 | **Outbound Message Retry** | Background job retries PENDING/FAILED outgoing messages (via the WhatsBox gateway / SMS) with a max-attempt budget. |
 | 11 | **Bitrix24 App Lifecycle** | Marketplace/local app install (`ONAPPINSTALL`), uninstall hook, OAuth token exchange/refresh, per-portal open-line activation. |
 | 12 | **Open Channels Connector** | Registers an `imconnector` connector (`wa_whatsapp`), sends operator messages through the Contact Center. |
 | 13 | **Audit & Message Logs** | Live activity log (lead created, reply sent, contacts synced, auth events) + full webhook/message logs with a retry button for failures. |
 | 14 | **Multi-Tenant** | Tenants with isolated settings, per-tenant WhatsApp channel/webhook, config wizard with live connection test + one-click auto-sync. |
 | 15 | **React SPA Dashboard** | Vite + React 19 dark-glassmorphism dashboard: KPI stats, leads, live chat, webhook setup, auto-replies, campaigns, activity/message logs. |
 | 16 | **Security** | JWT auth + roles, API keys, tenant context isolation, webhook HMAC/signature verification, rate limiting, helmet/CORS, masked secret settings, password reset via MS Graph email. |
+| 17 | **SMS Gateway (Bitrix24 provider)** | Registers a “My SMS Gateway” message provider (`messageservice.sender.add`) so Bitrix24 CRM / Automation / Workflows can send SMS through your gateway; delivery reports flow back via `messageservice.message.status.update`. See `docs/BITRIX24_SMS_PROVIDER.md`. |
 
 ---
 
@@ -37,8 +38,8 @@ It turns every incoming WhatsApp message into a deduplicated **Contact + Company
      ▼
 ┌────────────────────────────┐        ┌──────────────────────────────────────┐
 │   WhatsApp Gateway         │  POST  │   this middleware (Express)          │
-│   (WhatsBox / Meta Cloud   ├───────►│   POST /webhooks/whatsbox|meta       │
-│    API / Meta Graph)       │        │                                      │
+│   (WhatsBox)               ├───────►│   POST /webhooks/whatsbox            │
+│    Gateway)                │        │                                      │
 └────────────────────────────┘        │   - signature/HMAC verification      │
                                       │   - rate limiting                    │
                                       │   - persist Message (INCOMING)       │
@@ -63,7 +64,7 @@ It turns every incoming WhatsApp message into a deduplicated **Contact + Company
                               │  POST /webhooks/bitrix24             │
                               │  ONIMCONNECTORMESSAGEADD/UPDATE      │
                               │  → persist OUTGOING message          │
-                              │  → send via WhatsBox / Meta          │
+                              │  → send via WhatsBox (webhook)         │
                               └──────────────────────────────────────┘
 ```
 
@@ -75,9 +76,9 @@ It turns every incoming WhatsApp message into a deduplicated **Contact + Company
 
 ## 🧩 Full Feature / Functionality Catalog
 
-### Inbound pipeline (`/webhooks/whatsbox`, `/webhooks/meta`)
-- Flat (WhatsBox) and Meta `entry→changes→value` payload normalization into one internal event envelope.
-- Persist incoming message → dedupe contact by phone (Bitrix24 `duplicate.findbycomm` + normalized local match) → create/reuse conversation (updating provider + `phoneNumberId`) → **find-or-create Company** → **find-or-reuse open Lead** (open-only, newest-first) → reopen closed chats.
+### Inbound pipeline (`/webhooks/whatsbox`)
+- WhatsBox webhook payload normalization into one internal event envelope.
+- Persist incoming message → dedupe contact by phone (Bitrix24 `duplicate.findbycomm` + normalized local match) → create/reuse conversation (updating provider) → **find-or-create Company** → **find-or-reuse open Lead** (open-only, newest-first) → reopen closed chats.
 - **Company linking is best-effort & non-fatal**: any company failure is logged and the lead still returns — WhatsApp flow never breaks.
 - Auto-reply firing + operator auto-assignment.
 
@@ -90,10 +91,10 @@ It turns every incoming WhatsApp message into a deduplicated **Contact + Company
 - Campaign source tracking with `CAMPAIGN_B24_SOURCE_ID` (`WHATSAPP_CAMPAIGN`) and `CAMPAIGN_B24_LEAD_PREFIX` titles.
 
 ### Outbound messaging
-- Provider abstraction: **WhatsBox** (`sendText`/`sendMedia`, `MEDIUM=WHATSAPP_B24_INTEGRATION`) and **Meta Cloud API** (`sendText`, `sendMedia` link/media-id, `sendTemplate`, `sendLocation`).
+- Single WhatsApp provider: **WhatsBox** (`sendText`/`sendMedia`, `MEDIUM=WHATSAPP_B24_INTEGRATION`) — the only WhatsApp provider this app uses.
 - Persist-first pattern: message row created before sending; status moved `PENDING → SENT/FAILED`; provider message id backfilled.
-- Retry job (`RetryOutgoingMessagesJob`): picks up stuck PENDING/FAILED messages within budget (`OUTGOING_MAX_RETRIES`), provider-aware (includes DOCUMENT/PDF handling), manual kick from admin diagnostics.
-- Type mapping for both providers incl. text, image, audio, video, document/PDF, location, templates.
+- Retry job (`RetryOutgoingMessagesJob`): picks up stuck PENDING/FAILED messages within budget (`OUTGOING_MAX_RETRIES`), provider-aware (WhatsBox / SMS, includes DOCUMENT/PDF handling), manual kick from admin diagnostics.
+- Type mapping incl. text, image, audio, video, document/PDF (WhatsBox).
 
 ### Auto-replies
 - Per-tenant settings: `AUTO_REPLY_ENABLED`, `AUTO_REPLY_BODY`, `AUTO_REPLY_TEMPLATE_ID`, `AUTO_REPLY_ONCE_PER_CONTACT`, `AUTO_REPLY_SKIP_ASSIGNED`.
@@ -131,7 +132,7 @@ It turns every incoming WhatsApp message into a deduplicated **Contact + Company
 - Roles: `ADMIN`, `SUPER_ADMIN`, `TENANT_ADMIN`, `USER`.
 - Auth: JWT Bearer / `x-auth-token`; legacy `x-api-key` header + `?api_key` query (comma-separated `API_KEYS`).
 - Tenant context: from the JWT user or `x-tenant-id` / `x-tenant-slug` headers; tenant-scoped settings.
-- Security: webhook HMAC verification (`x-webhook-signature` / `x-whatsbox-signature` / `x-signature`, hex or base64, optional `x-webhook-secret`), Meta `X-Hub-Signature-256`, Bitrix24 secret check, rate limiters (API + webhook), helmet (CSP/clickjacking tuned for Bitrix24 iframe), CORS, secret masking in settings.
+- Security: webhook HMAC verification (`x-webhook-signature` / `x-whatsbox-signature` / `x-signature`, hex or base64, optional `x-webhook-secret`), Bitrix24 secret check, rate limiters (API + webhook), helmet (CSP/clickjacking tuned for Bitrix24 iframe), CORS, secret masking in settings.
 
 ---
 
@@ -193,9 +194,7 @@ It turns every incoming WhatsApp message into a deduplicated **Contact + Company
 | Method | Path | Description |
 |---|---|---|
 | `POST` | `/webhooks/whatsbox` | WhatsBox inbound (raw body + HMAC) |
-| `GET` | `/webhooks/whatsbox` | Meta-style hub challenge |
-| `POST` | `/webhooks/meta` | Meta Cloud API inbound (`X-Hub-Signature-256`) |
-| `GET` | `/webhooks/meta` | Meta hub verification |
+| `GET` | `/webhooks/whatsbox` | Hub challenge verification |
 | `POST` | `/webhooks/bitrix24` | Bitrix24 events (operator replies, lead mirror) |
 
 ### Bitrix24 app endpoints
@@ -225,23 +224,6 @@ It turns every incoming WhatsApp message into a deduplicated **Contact + Company
 ```
 Also accepts `status` events. Signature via `x-webhook-signature` / `x-whatsbox-signature` / `x-signature` (hex or base64), optional `x-webhook-secret`.
 
-**Meta Cloud API:**
-```json
-{
-  "entry": [
-    { "changes": [
-      { "value": {
-          "metadata": { "phone_number_id": "104553123456789" },
-          "contacts": [{ "wa_id": "919999876541", "profile": { "name": "John" } }],
-          "messages": [{ "from": "919999876541", "text": { "body": "Hello" } }],
-          "statuses": []
-      } }
-    ] }
-  ]
-}
-```
-Verified with `X-Hub-Signature-256` (HMAC-SHA256 of raw body using `META_APP_SECRET`).
-
 **Bitrix24 (form-encoded, event in `event` field):**
 - `ONIMCONNECTORMESSAGEADD` / `ONIMCONNECTORMESSAGEUPDATE` — operator replies to deliver to WhatsApp.
 - `ONCRMLEADADD` — campaign lead mirror (`CAMPAIGN_B24_SOURCE_ID` source filter).
@@ -265,12 +247,12 @@ Verified with `X-Hub-Signature-256` (HMAC-SHA256 of raw body using `META_APP_SEC
 | `RETRY_ENABLED` / `RETRY_INTERVAL_MS` / `OUTGOING_MAX_RETRIES` | `true` / `300000` / `3` | Retry job |
 | `WHATSBOX_API_URL` / `WHATSBOX_API_KEY` / `WHATSBOX_CHANNEL_ID` / `WHATSBOX_WEBHOOK_SECRET` | — | WhatsBox provider |
 | `WHATSAPP_WEBHOOK_URL` | — | Public webhook URL (per-tenant default fallback) |
-| `META_API_BASE_URL` / `META_GRAPH_VERSION` / `META_ACCESS_TOKEN` / `META_PHONE_NUMBER_ID` | `graph.facebook.com` / `v21.0` / — | Meta Cloud API |
-| `META_APP_ID` / `META_APP_SECRET` / `META_WEBHOOK_VERIFY_TOKEN` | — | Meta webhook verification |
+| `META_*` (Meta Cloud API) | removed | No longer used — all WhatsApp in/out goes through the WhatsBox webhook |
 | `BITRIX24_WEBHOOK_URL` / `BITRIX24_WEBHOOK_SECRET` | — | Inbound REST webhook + secret |
 | `BITRIX24_CLIENT_ID` / `BITRIX24_CLIENT_SECRET` / `BITRIX24_MEMBER_ID` | — | Marketplace app OAuth |
 | `BITRIX24_OAUTH_TOKEN_URL` | `oauth.bitrix.info` | Token endpoint |
 | `APP_BASE_URL` | — | Public app URL (builds uninstall URL) |
+| `SMS_PROVIDER` / `SMS_API_URL` / `SMS_API_KEY` / `SMS_SENDER_ID` / `SMS_ROUTE` / `SMS_TEMPLATE_ID` / `SMS_WEBHOOK_SECRET` | — | SMS gateway defaults (per-tenant overridable from the SMS Gateway dashboard) |
 | `BITRIX24_CONNECTOR_ID` | `wa_whatsapp` | Open Channels connector id |
 | `BITRIX24_OPENLINE_ID` | `0` | Auto-activate line on install (`0` = manual) |
 | `ENABLE_OPENLINES_CONNECTOR` | `false` | Open Channels connector feature flag |
@@ -330,7 +312,6 @@ whatsappintegration/
 │   ├── services/              # Business logic
 │   │   ├── bitrix24/          #   service, client, oauth, connector
 │   │   ├── whatsbox/          #   WhatsBox provider
-│   │   ├── meta/              #   Meta Cloud API provider
 │   │   ├── conversation.service.js
 │   │   ├── customerResolver.service.js
 │   │   ├── outgoingMessage.service.js
@@ -408,6 +389,24 @@ npx prisma generate          # regenerate client (stop the server first on Windo
 > See `docs/BITRIX24_SETUP.md` for Bitrix24 marketplace/app/connector setup and `docs/ERD.md` for the schema.
 
 ---
+
+## 🚀 Deploy to Render
+
+Webhooks need a **public, always-on HTTPS URL** — localhost won't work for
+Bitrix24, WhatsBox, or the SMS gateway. Full step-by-step (GitHub push →
+Blueprint → env vars → re-pointing webhooks) is in **[`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md)**.
+
+Quick summary:
+- Deploy via Git using the included **`render.yaml`** (Blueprint). Use the
+  paid **Starter** plan — the free tier sleeps and drops webhooks.
+- DB stays on **Neon**; only the app runs on Render.
+- Fill `DATABASE_URL` + WhatsBox/Bitrix24 keys in Render's Env tab
+  (`APP_BASE_URL` auto-falls-back to your Render URL).
+- After deploy: reinstall the Bitrix24 app, update the WhatsBox gateway webhook
+  and SMS DLR callback to `https://<app>.onrender.com/webhooks/...`, then test.
+
+---
+
 
 ## 🔐 Default Admin Credentials
 

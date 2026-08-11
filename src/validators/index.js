@@ -23,6 +23,7 @@ const {
   campaignIdParamSchema,
   executeCampaignSchema,
 } = require('./campaign.validator');
+const { smsConfigSchema, smsTestSchema } = require('./sms.validator');
 
 module.exports = {
   validate,
@@ -71,4 +72,8 @@ module.exports = {
   listCampaignsQuerySchema,
   campaignIdParamSchema,
   executeCampaignSchema,
+
+  // sms gateway
+  smsConfigSchema,
+  smsTestSchema,
 };
