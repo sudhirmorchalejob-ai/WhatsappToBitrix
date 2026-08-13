@@ -1,8 +1,16 @@
 const axios = require('axios');
 const logger = require('../../utils/logger');
+const { env } = require('../../config');
 const { WebhookLogRepository } = require('../../repositories/webhookLog.repository');
 
 const log = logger.childFor('bitrix24-webhook-controller');
+
+function firstDefined(...values) {
+  for (const value of values) {
+    if (value !== undefined && value !== null && String(value).trim() !== '') return String(value).trim();
+  }
+  return '';
+}
 
 function createWebhookController({
   webhookLogRepository = new WebhookLogRepository(),
@@ -16,23 +24,43 @@ function createWebhookController({
         console.log("========== INCOMING FROM BITRIX24 ==========");
         console.log(JSON.stringify(req.body, null, 2));
 
-        // 2. Extract variables safely (handling different Bitrix24 payload structures)
-        const phone = req.body?.message_to || req.body?.properties?.phone_number || "";
-        const message = req.body?.message_body || req.body?.properties?.message_text || "";
+        // 2. Extract variables safely (handling different Bitrix24 payload structures).
+        // Accepts every common field name so the send never silently drops
+        // the recipient or the text.
+        const body = req.body || {};
+        const props = body.properties || {};
+        const phone = firstDefined(
+          body.message_to,
+          props.phone_number,
+          body.phone,
+          body.mobile,
+          body.number,
+          body.to,
+          body.recipient
+        );
+        const message = firstDefined(
+          body.message_body,
+          props.message_text,
+          body.message,
+          body.body,
+          body.text,
+          body.content
+        );
 
-        // 3. Construct the exact, flat JSON payload for Averlon
+        // 3. Construct the exact, flat JSON payload for the WhatsApp gateway.
+        // WHATSBOX_CHANNEL_ID comes from config (never a hardcoded fallback).
         const payload = {
-          phone: phone,
-          message: message,
-          channel_id: process.env.WHATSBOX_CHANNEL_ID || "15554035922"
+          phone,
+          message,
+          channel_id: env.WHATSBOX_CHANNEL_ID || undefined,
         };
 
         console.log("========== SENDING TO AVERLON ==========");
         console.log(JSON.stringify(payload, null, 2));
 
-        // 4. Dispatch to Averlon with explicit JSON headers
-        if (process.env.WHATSBOX_API_URL) {
-          const response = await axios.post(process.env.WHATSBOX_API_URL, payload, {
+        // 4. Dispatch to the gateway with explicit JSON headers
+        if (env.WHATSBOX_API_URL) {
+          const response = await axios.post(env.WHATSBOX_API_URL, payload, {
             headers: {
               'Content-Type': 'application/json',
               'Accept': 'application/json'
