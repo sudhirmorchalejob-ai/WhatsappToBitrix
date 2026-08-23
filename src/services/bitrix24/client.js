@@ -135,9 +135,10 @@ class Bitrix24Client {
           );
         }
 
-        log.debug(`[ok] ${method}`, {
+        log.info(`[Bitrix24 API OK] ${method}`, {
           durationMs: Date.now() - startedAt,
           attempt: attempt + 1,
+          resultSummary: typeof data?.result === 'object' ? Object.keys(data.result).length + ' fields/items' : data?.result,
         });
         return data;
       } catch (err) {
@@ -151,11 +152,12 @@ class Bitrix24Client {
         ) {
           authRetried = true;
           try {
+            log.info(`[Bitrix24 Auth Refreshing] ${method} triggered token rotation`);
             const token = await this.onAuthFailure(normalized);
             this.setAccessToken(token);
             continue;
           } catch (refreshErr) {
-            log.error(`[auth-refresh-failed] ${method}`, {
+            log.error(`[Bitrix24 Auth Refresh FAILED] ${method}`, {
               code: refreshErr.code,
               message: refreshErr.message,
             });
@@ -171,16 +173,17 @@ class Bitrix24Client {
             /already bound/i.test(normalized.message || '');
 
           if (isAlreadyBound) {
-            log.info(`[already-bound] ${method}`, {
+            log.info(`[Bitrix24 Event Already Bound] ${method}`, {
               code: normalized.code,
               message: normalized.message,
             });
           } else {
-            log.error(`[fail] ${method}`, {
+            log.error(`[Bitrix24 API FAILED] ${method}`, {
               code: normalized.code,
               message: normalized.message,
               durationMs: Date.now() - startedAt,
               attempt: attempt + 1,
+              params: JSON.stringify(params),
             });
           }
           throw normalized;
@@ -188,7 +191,7 @@ class Bitrix24Client {
 
         attempt += 1;
         const delay = Math.min(1000 * 2 ** attempt, MAX_BACKOFF_MS);
-        log.warn(`[retry] ${method} attempt ${attempt}/${retries}`, {
+        log.warn(`[Bitrix24 API RETRY] ${method} attempt ${attempt}/${retries}`, {
           code: normalized.code,
           delayMs: delay,
         });

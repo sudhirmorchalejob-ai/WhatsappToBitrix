@@ -51,6 +51,13 @@ class OutgoingMessageService {
   }
 
   async sendText(input) {
+    log.info(`[Outgoing Message] Sending text to ${input.to}`, {
+      bodyPreview: (input.body || '').slice(0, 100),
+      campaignId: input.campaignId,
+      channelId: input.channelId,
+      tenantId: input.tenantId,
+    });
+
     const { conversation, messageContact } = await this._resolveContext(input);
     const leadContext = this._leadContext(input, messageContact);
     const leadId = await this._resolveLeadId({ input, conversation, messageContact, firstBody: input.body, leadContext });
@@ -65,6 +72,7 @@ class OutgoingMessageService {
       status: MESSAGE_STATUS.PENDING,
       campaignId: input.campaignId,
     });
+    log.info(`[Outgoing Message Saved] DB Message #${message.id} (Status: PENDING, Lead #${leadId || 'none'})`);
 
     try {
       const result = await this.whatsbox.sendText({
@@ -76,14 +84,25 @@ class OutgoingMessageService {
         name: input.name,
       });
       await this._markSent(message.id, result);
+      log.info(`[Outgoing Message Sent OK] DB Message #${message.id} -> Gateway WAMID: ${result.whatsboxMessageId || result.wamid || 'ack'}`);
     } catch (err) {
+      log.error(`[Outgoing Message Send FAILED] DB Message #${message.id}`, { error: err.message });
       await this._markFailed(message.id, err);
+      throw err;
     }
 
     return this.messageRepo.findById(message.id);
   }
 
   async sendMedia(input) {
+    log.info(`[Outgoing Message] Sending media to ${input.to}`, {
+      mediaUrl: input.link,
+      type: input.type,
+      caption: input.caption,
+      campaignId: input.campaignId,
+      tenantId: input.tenantId,
+    });
+
     const { conversation, messageContact } = await this._resolveContext(input);
     const type = this._toDbType(input);
     const leadContext = this._leadContext(input, messageContact);
@@ -102,6 +121,7 @@ class OutgoingMessageService {
       status: MESSAGE_STATUS.PENDING,
       campaignId: input.campaignId,
     });
+    log.info(`[Outgoing Message Saved] DB Media Message #${message.id} (Status: PENDING, Lead #${leadId || 'none'})`);
 
     try {
       const result = await this.whatsbox.sendMedia({
@@ -115,8 +135,11 @@ class OutgoingMessageService {
         name: input.name,
       });
       await this._markSent(message.id, result);
+      log.info(`[Outgoing Media Message Sent OK] DB Message #${message.id} -> Gateway WAMID: ${result.whatsboxMessageId || result.wamid || 'ack'}`);
     } catch (err) {
+      log.error(`[Outgoing Media Message Send FAILED] DB Message #${message.id}`, { error: err.message });
       await this._markFailed(message.id, err);
+      throw err;
     }
 
     return this.messageRepo.findById(message.id);

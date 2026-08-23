@@ -89,6 +89,14 @@ class CampaignService {
     const phones = this._normalizePhones(data.recipients);
     const segment = this._resolveSegment(data);
 
+    log.info(`[Campaign Service] Creating campaign "${data.name}"`, {
+      type: data.type,
+      recipientsCount: phones.length,
+      segment: segment ? segment.name : null,
+      createdVia: data.createdVia,
+      tenantId,
+    });
+
     const campaign = await this.repo.create({
       tenantId: tenantId ? Number(tenantId) : null,
       name: data.name,
@@ -110,6 +118,7 @@ class CampaignService {
     // never block the campaign creation.
     if (data.createdVia === 'WHATSAPP') {
       try {
+        log.info(`[Campaign Service] Mirroring campaign "${data.name}" as Bitrix24 Lead`);
         const bitrix24LeadId = Number(
           await this.bitrix24.createCampaignLead({
             name: data.name,
@@ -120,17 +129,15 @@ class CampaignService {
         );
         if (bitrix24LeadId) {
           await this.repo.update(campaign.id, { bitrix24LeadId });
+          log.info(`[Campaign Service] Mirrored to Bitrix24 Lead #${bitrix24LeadId}`);
         }
       } catch (err) {
-        log.warn('campaign push to Bitrix24 failed; campaign stays local', {
-          campaignId: campaign.id,
-          code: err.code,
-          message: err.message,
-        });
+        log.warn(`[Campaign Service] Mirroring to Bitrix24 lead skipped/failed: ${err.message}`);
       }
     }
 
-    return this.repo.findById(campaign.id, tenantId);
+    log.info(`[Campaign Service] Campaign #${campaign.id} created successfully`);
+    return this.get(campaign.id, tenantId);
   }
 
   async list(query = {}, tenantId = null) {
@@ -151,39 +158,39 @@ class CampaignService {
   }
 
   async update(id, input, tenantId = null) {
+    log.info(`[Campaign Service] Updating campaign #${id}`);
     const existing = await this.repo.findById(id, tenantId);
     if (!existing) throw new AppError('Campaign not found', 404, null, 'CAMPAIGN_NOT_FOUND');
-    if (existing.status === CAMPAIGN_STATUS.PROCESSING) {
-      throw new AppError('Campaign is processing and cannot be edited', 409, null, 'CAMPAIGN_PROCESSING');
+    if (existing.status !== CAMPAIGN_STATUS.DRAFT) {
+      throw new AppError('Only DRAFT campaigns can be edited', 409, null, 'CAMPAIGN_NOT_DRAFT');
     }
 
     const data = createSchema.partial().parse(input || {});
-    const patch = {};
-    if (data.name !== undefined) patch.name = data.name;
-    if (data.type !== undefined) patch.type = data.type;
-    if (data.body !== undefined) patch.body = data.body;
-    if (data.mediaUrl !== undefined) patch.mediaUrl = data.mediaUrl;
-    if (data.caption !== undefined) patch.caption = data.caption;
-    if (data.segmentId !== undefined) {
-      const segment = this._resolveSegment(data);
-      patch.segmentKey = segment ? segment.key : null;
-      patch.segmentName = segment ? segment.name : null;
+    const segment = this._resolveSegment(data);
+    const updateData = {};
+    if (data.name !== undefined) updateData.name = data.name;
+    if (data.type !== undefined) updateData.type = data.type;
+    if (data.body !== undefined) updateData.body = data.body || null;
+    if (data.mediaUrl !== undefined) updateData.mediaUrl = data.mediaUrl || null;
+    if (data.caption !== undefined) updateData.caption = data.caption || null;
+    if (segment) {
+      updateData.segmentKey = segment.key;
+      updateData.segmentName = segment.name;
     }
-    if (Object.keys(patch).length) await this.repo.update(id, patch);
+
+    if (Object.keys(updateData).length) await this.repo.update(id, updateData);
 
     if (data.recipients !== undefined) {
       const phones = this._normalizePhones(data.recipients);
-      if (phones.length) await this.repo.addRecipients(id, phones);
-      const counts = await this.repo.recipientCounts(id);
-      await this.repo.update(id, {
-        totalRecipients: Object.values(counts).reduce((a, b) => a + b, 0),
-      });
+      await this.repo.replaceRecipients(id, phones);
+      await this.repo.update(id, { totalRecipients: phones.length });
     }
 
     return this.get(id, tenantId);
   }
 
   async delete(id, tenantId = null) {
+    log.info(`[Campaign Service] Deleting campaign #${id}`);
     const existing = await this.repo.findById(id, tenantId);
     if (!existing) throw new AppError('Campaign not found', 404, null, 'CAMPAIGN_NOT_FOUND');
     if (existing.status === CAMPAIGN_STATUS.PROCESSING) {
@@ -206,6 +213,7 @@ class CampaignService {
    * and re-tried by the retry job.
    */
   async execute(id, { recipients = [], segmentId = null, tenantId = null } = {}) {
+    log.info(`[Campaign Execution STARTED] Campaign #${id}`, { segmentId, explicitRecipients: recipients.length });
     const campaign = await this.repo.findById(id, tenantId);
     if (!campaign) throw new AppError('Campaign not found', 404, null, 'CAMPAIGN_NOT_FOUND');
     if (campaign.status === CAMPAIGN_STATUS.PROCESSING) {
@@ -227,6 +235,7 @@ class CampaignService {
       }
       segmentKey = segment.key;
       await this.repo.update(id, { segmentKey: segment.key, segmentName: segment.name });
+      log.info(`[Campaign Segment Bound] Key: ${segment.key}, Name: "${segment.name}"`);
     }
 
     // Resolve the audience: segment members (live) + explicit numbers.
@@ -245,6 +254,7 @@ class CampaignService {
       audience = stored.map((r) => r.phone);
     }
     if (!audience.length) {
+      log.warn(`[Campaign Execution FAILED] Campaign #${id} has no recipients`);
       throw new AppError(
         segmentKey
           ? 'Campaign segment has no members to send to.'
@@ -262,6 +272,7 @@ class CampaignService {
       throw new AppError('Campaign has no recipients to send to.', 400, null, 'CAMPAIGN_NO_RECIPIENTS');
     }
 
+    log.info(`[Campaign Execution] Total Audience: ${finalPending.length} recipients to send to`);
     await this.repo.setStatus(id, CAMPAIGN_STATUS.PROCESSING, { startedAt: new Date(), error: null });
     await this.repo.update(id, { totalRecipients: finalPending.length });
 
@@ -277,6 +288,7 @@ class CampaignService {
     let failed = 0;
 
     for (const recipient of finalPending) {
+      log.info(`[Campaign Dispatching] #${campaign.id} to ${recipient.phone}`);
       const input = {
         ...sendInput,
         to: recipient.phone,
@@ -304,12 +316,12 @@ class CampaignService {
           leadId: message ? message.leadId : null,
         });
         sent += 1;
+        log.info(`[Campaign Recipient Sent] ${recipient.phone} (DB Message #${message?.id})`);
       } catch (err) {
-        log.warn('campaign recipient send failed', {
+        log.error(`[Campaign Recipient FAILED] ${recipient.phone}`, {
           campaignId: id,
           phone: recipient.phone,
-          code: err.code,
-          message: err.message,
+          error: err.message,
         });
         await this.repo.updateRecipientStatus(recipient.id, {
           status: RECIPIENT_STATUS.FAILED,
@@ -330,7 +342,7 @@ class CampaignService {
 
     await this.repo.setStatus(id, status, { completedAt: new Date(), error: null });
 
-    log.info('campaign executed', { campaignId: id, status, sent, failed, segmentKey });
+    log.info(`[Campaign Execution FINISHED] Campaign #${id} Outcome: ${status} (Sent: ${sent}, Failed: ${failed})`);
     return this.get(id, tenantId);
   }
 

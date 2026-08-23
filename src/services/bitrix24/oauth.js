@@ -107,22 +107,22 @@ class Bitrix24OAuth {
    * our lifecycle `status` column (INSTALLED/UNINSTALLED/DISABLED).
    */
   async installFromEvent(auth = {}) {
-    const memberId = pickKey(auth, ['member_id', 'memberId']);
-    const accessToken = pickKey(auth, ['access_token', 'accessToken']);
-    const refreshToken = pickKey(auth, ['refresh_token', 'refreshToken']);
-    const domain = pickKey(auth, ['domain']);
-    const applicationToken = pickKey(auth, ['application_token', 'applicationToken']);
-    const clientEndpoint = pickKey(auth, ['client_endpoint', 'clientEndpoint']);
-    const scope = pickKey(auth, ['scope']);
-    const expiresIn = Number(pickKey(auth, ['expires_in', 'expiresIn']) || 3600);
+    const memberId = pickKey(auth, ['member_id', 'MEMBER_ID', 'memberId']);
+    const accessToken = pickKey(auth, ['access_token', 'accessToken', 'AUTH_ID', 'auth_id']);
+    const refreshToken = pickKey(auth, ['refresh_token', 'refreshToken', 'REFRESH_ID', 'refresh_id']) || '';
+    const domain = pickKey(auth, ['domain', 'DOMAIN']) || '';
+    const applicationToken = pickKey(auth, ['application_token', 'applicationToken', 'APPLICATION_TOKEN']) || null;
+    const clientEndpoint = pickKey(auth, ['client_endpoint', 'clientEndpoint', 'CLIENT_ENDPOINT']) || (domain ? this.restBaseUrl(domain) : null);
+    const scope = pickKey(auth, ['scope', 'SCOPE']) || null;
+    const expiresIn = Number(pickKey(auth, ['expires_in', 'expiresIn', 'AUTH_EXPIRES', 'auth_expires']) || 3600);
 
-    if (!memberId || !accessToken || !refreshToken) {
-      throw new AppError('Install event is missing member_id/access_token/refresh_token', 400, null, 'B24_INSTALL_INVALID');
+    if (!memberId || !accessToken) {
+      throw new AppError('Install event is missing member_id/access_token', 400, null, 'B24_INSTALL_INVALID');
     }
 
     return this.installRepo.upsert({
       memberId,
-      domain: domain || '',
+      domain,
       clientEndpoint,
       accessToken,
       refreshToken,

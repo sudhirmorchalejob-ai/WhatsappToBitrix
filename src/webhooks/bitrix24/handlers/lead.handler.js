@@ -120,9 +120,12 @@ class LeadAddedHandler {
     const memberId = (install && install.memberId) || canonical.memberId || null;
     const tenantId = install && install.tenantId ? Number(install.tenantId) : null;
 
+    log.info(`[Bitrix24 Lead Webhook Received] Lead ID: ${leadId}`, { leadId, memberId, tenantId });
+
     // Dedup first: a campaign already mirrored for this lead is a no-op.
     const existing = await this.campaignRepository.findByBitrix24LeadId(leadId, tenantId);
     if (existing) {
+      log.info(`[Bitrix24 Lead Campaign Skipped] Duplicate already exists as Campaign ID: ${existing.id}`, { leadId, campaignId: existing.id });
       return { handled: true, skipped: true, reason: 'duplicate', campaignId: existing.id };
     }
 
@@ -131,26 +134,29 @@ class LeadAddedHandler {
     // client for portals where only the app context can read.
     let lead;
     try {
+      log.info(`[Bitrix24 Lead Fetching] Getting details for Lead #${leadId}`);
       lead = await this.bitrix24.getLead(leadId, tenantId);
     } catch (err) {
-      log.info('webhook lead fetch failed, trying app context', { leadId, code: err.code, message: err.message });
+      log.info(`[Bitrix24 Lead Webhook Fetch Failed, trying app context]`, { leadId, code: err.code, message: err.message });
       try {
         if (memberId) {
           this.bitrix24.activate(memberId);
           lead = await this.bitrix24.callAsApp(memberId, BITRIX24_METHODS.LEAD_GET, { id: leadId });
         }
       } catch (appErr) {
-        log.warn('lead fetch failed for campaign sync', { leadId, code: appErr.code, message: appErr.message });
+        log.warn(`[Bitrix24 Lead Fetch FAILED for campaign sync]`, { leadId, code: appErr.code, message: appErr.message });
         return { handled: true, skipped: true, reason: 'lead-fetch-failed', error: appErr.message };
       }
     }
 
     if (!lead || !lead.TITLE) {
+      log.info(`[Bitrix24 Lead Skipped] Lead #${leadId} has no title`);
       return { handled: true, skipped: true, reason: 'lead-empty' };
     }
 
     const name = this._campaignNameFromTitle(lead.TITLE);
     if (!name) {
+      log.info(`[Bitrix24 Lead Skipped] Title "${lead.TITLE}" is not a campaign lead (prefix required: "${CAMPAIGN_B24_LEAD_PREFIX}")`);
       return { handled: true, skipped: true, reason: 'not-campaign-lead' };
     }
 
@@ -160,6 +166,8 @@ class LeadAddedHandler {
     // is the remaining comments. Without a segment, fall back to the phone
     // number(s) carried directly on the lead.
     const phones = segment ? [] : this._phonesFromLead(lead);
+    log.info(`[Bitrix24 Lead Campaign Detected] Name: "${name}", Segment: ${segment ? segment.name : 'Direct phone list (' + phones.length + ' numbers)'}`);
+
     const campaign = await this.campaignRepository.create({
       tenantId,
       name,
@@ -177,7 +185,7 @@ class LeadAddedHandler {
       await this.campaignRepository.addRecipients(campaign.id, phones);
     }
 
-    log.info('campaign mirrored from Bitrix24 lead', {
+    log.info(`[Bitrix24 Lead Campaign Successfully Created] Campaign ID: ${campaign.id}, Status: DRAFT`, {
       campaignId: campaign.id,
       leadId,
       tenantId,

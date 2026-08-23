@@ -85,25 +85,31 @@ class WhatsBoxClient {
           );
         }
 
-        log.debug(`[ok] ${path}`, { durationMs: Date.now() - startedAt, attempt: attempt + 1 });
+        log.info(`[WhatsApp Gateway OK] ${path}`, {
+          durationMs: Date.now() - startedAt,
+          attempt: attempt + 1,
+          status: res.status,
+          response: typeof data === 'object' ? JSON.stringify(data).slice(0, 300) : data,
+        });
         return data;
       } catch (err) {
         const normalized = err instanceof WhatsBoxApiError ? err : mapAxiosError(err);
         lastError = normalized;
 
         if (attempt >= retries || !isTransient(normalized)) {
-          log.error(`[fail] ${path}`, {
+          log.error(`[WhatsApp Gateway FAILED] ${path}`, {
             code: normalized.code,
             message: normalized.message,
             status: normalized.statusCode,
             attempt: attempt + 1,
+            payload: JSON.stringify(payload).slice(0, 500),
           });
           throw normalized;
         }
 
         attempt += 1;
         const delay = Math.min(1000 * 2 ** attempt, MAX_BACKOFF_MS);
-        log.warn(`[retry] ${path} attempt ${attempt}/${retries}`, {
+        log.warn(`[WhatsApp Gateway RETRY] ${path} attempt ${attempt}/${retries}`, {
           code: normalized.code,
           delayMs: delay,
         });

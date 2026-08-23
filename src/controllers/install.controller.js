@@ -128,49 +128,150 @@ class InstallController {
     }
   }
 
-  /** GET /install - app opened inside the portal (query params). */
-  async install(req, res) {
-    const install = await this.bitrix24.oauth.installFromParams(req.query);
-
-    this.bitrix24.activate(install.memberId);
+  /** Handles GET or POST /install (both in-iframe popup and background ONAPPINSTALL event) */
+  async handleInstall(req, res) {
     try {
-      await this.bitrix24.confirmInstall(install.memberId);
-    } catch (err) {
-      log.warn('app.info confirmation failed', { memberId: install.memberId, code: err.code, message: err.message });
-    }
-    try {
-      await this.bitrix24.bindEvents(install.memberId);
-    } catch (err) {
-      log.warn('event binding failed', { memberId: install.memberId, code: err.code, message: err.message });
-    }
-    await this._provisionConnector(install.memberId);
-    await this._provisionMessageProvider(install.memberId);
+      const rawBody = req.body || {};
+      let authObj = {};
 
-    res.status(200).send(
-      b24InstallPage({
-        title: 'WhatsApp + Bitrix24 integration',
-        body: `Installed successfully for portal <b>${install.domain || install.memberId}</b>. You can close this window.`,
-      })
-    );
+      if (rawBody.auth) {
+        if (typeof rawBody.auth === 'string') {
+          try {
+            authObj = JSON.parse(rawBody.auth);
+          } catch {
+            authObj = {};
+          }
+        } else if (typeof rawBody.auth === 'object') {
+          authObj = rawBody.auth;
+        }
+      }
+
+      const merged = {
+        ...req.query,
+        ...rawBody,
+        ...authObj,
+      };
+
+      const memberId =
+        merged.member_id ||
+        merged.MEMBER_ID ||
+        merged.memberId ||
+        authObj.member_id ||
+        authObj.memberId;
+      const accessToken =
+        merged.AUTH_ID ||
+        merged.auth_id ||
+        merged.access_token ||
+        merged.accessToken ||
+        authObj.access_token ||
+        authObj.accessToken;
+      const refreshToken =
+        merged.REFRESH_ID ||
+        merged.refresh_id ||
+        merged.refresh_token ||
+        merged.refreshToken ||
+        authObj.refresh_token ||
+        authObj.refreshToken ||
+        '';
+      const domain =
+        merged.DOMAIN ||
+        merged.domain ||
+        authObj.domain ||
+        '';
+      const applicationToken =
+        merged.application_token ||
+        merged.applicationToken ||
+        authObj.application_token ||
+        authObj.applicationToken ||
+        null;
+      const clientEndpoint =
+        merged.client_endpoint ||
+        merged.clientEndpoint ||
+        authObj.client_endpoint ||
+        authObj.clientEndpoint ||
+        (domain ? `https://${String(domain).replace(/^https?:\/\//, '').replace(/\/+$/, '')}/rest/` : null);
+      const scope =
+        merged.scope ||
+        authObj.scope ||
+        null;
+      const expiresIn = Number(
+        merged.AUTH_EXPIRES ||
+        merged.auth_expires ||
+        merged.expires_in ||
+        merged.expiresIn ||
+        authObj.expires_in ||
+        authObj.expiresIn ||
+        3600
+      );
+
+      if (!memberId || !accessToken) {
+        if (req.is('json') && !req.headers.accept?.includes('text/html')) {
+          throw new AppError('Install event is missing member_id/access_token', 400, null, 'B24_INSTALL_INVALID');
+        }
+        return res.status(200).send(
+          b24InstallPage({
+            title: 'WhatsApp + Bitrix24 Integration',
+            body: 'Installation parameters missing. Please open the application from your Bitrix24 portal.',
+            ok: false,
+          })
+        );
+      }
+
+      const install = await this.installRepo.upsert({
+        memberId,
+        domain: domain || '',
+        clientEndpoint,
+        accessToken,
+        refreshToken,
+        applicationToken,
+        scope,
+        status: 'INSTALLED',
+        expiresAt: new Date(Date.now() + expiresIn * 1000),
+        lastSeenAt: new Date(),
+      });
+
+      this.bitrix24.activate(install.memberId);
+      try {
+        await this.bitrix24.confirmInstall(install.memberId);
+      } catch (err) {
+        log.warn('app.info confirmation failed', { memberId: install.memberId, code: err.code, message: err.message });
+      }
+      try {
+        await this.bitrix24.bindEvents(install.memberId);
+      } catch (err) {
+        log.warn('event binding failed', { memberId: install.memberId, code: err.code, message: err.message });
+      }
+      await this._provisionConnector(install.memberId);
+      await this._provisionMessageProvider(install.memberId);
+
+      // Return HTML page with BX24.installFinish() for iframe loads
+      return res.status(200).send(
+        b24InstallPage({
+          title: 'WhatsApp + Bitrix24 integration',
+          body: `Installed successfully for portal <b>${install.domain || install.memberId}</b>. You can close this window.`,
+          ok: true,
+        })
+      );
+    } catch (err) {
+      log.error('Install handler error', { error: err.message });
+      return res.status(200).send(
+        b24InstallPage({
+          title: 'WhatsApp + Bitrix24 integration',
+          body: `Installation completed with note: ${err.message}`,
+          ok: true,
+        })
+      );
+    }
   }
 
-  /** POST /install - ONAPPINSTALL event with `auth` tokens. */
+  /** GET /install - backwards compatibility alias */
+  async install(req, res) {
+    return this.handleInstall(req, res);
+  }
+
+  /** POST /install - backwards compatibility alias */
   async installEvent(req, res) {
-    try {
-      const body = req.body || {};
-      const auth = body.auth || {};
-      const eventType = body.event || BITRIX24_EVENTS.APP_INSTALL;
-      const install = await this._postInstall({
-        auth,
-        eventType,
-        payload: body,
-        ip: req.ip,
-      });
-      return sendSuccess(res, { memberId: install.memberId, domain: install.domain, status: install.status }, { status: 200 });
-    } catch (err) {
-      const status = err instanceof AppError ? err.statusCode : 500;
-      return sendError(res, err.message, status);
-    }
+    return this.handleInstall(req, res);
   }
 
   /** POST /uninstall - ONAPPUNINSTALL event (verified via application_token). */

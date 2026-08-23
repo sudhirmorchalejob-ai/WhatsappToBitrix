@@ -58,15 +58,30 @@ class ConnectorModuleController {
     let summary = { ok: false, memberId: null, registered: false, activated: false, error: null };
 
     try {
-      const params = req.method === 'POST' ? { ...req.query, ...req.body } : req.query;
-      const memberId = params.member_id || params.MEMBER_ID || req.body?.member_id;
+      const rawBody = req.body || {};
+      let authObj = {};
+      if (rawBody.auth) {
+        if (typeof rawBody.auth === 'string') {
+          try {
+            authObj = JSON.parse(rawBody.auth);
+          } catch {
+            authObj = {};
+          }
+        } else if (typeof rawBody.auth === 'object') {
+          authObj = rawBody.auth;
+        }
+      }
+      const params = { ...req.query, ...rawBody, ...authObj };
+      const memberId = params.member_id || params.MEMBER_ID || params.memberId;
 
       // 1. Exchange / save OAuth tokens from install payload
       let install = null;
       if (params.code) {
         install = await this.bitrix24.oauth.handleCallback({ code: params.code, domain: params.domain || params.DOMAIN, memberId });
-      } else if (params.auth_id || params.AUTH_ID) {
+      } else if (params.auth_id || params.AUTH_ID || params.access_token || params.accessToken) {
         install = await this.bitrix24.oauth.installFromParams(params);
+      } else if (Object.keys(authObj).length) {
+        install = await this.bitrix24.oauth.installFromEvent(authObj);
       } else {
         install = await this.installRepo.findActiveMostRecent();
       }
