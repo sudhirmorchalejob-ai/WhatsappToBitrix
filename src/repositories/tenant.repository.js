@@ -57,6 +57,13 @@ class TenantRepository {
 
     return { items, total };
   }
+
+  async findFirstActive() {
+    return this.prisma.tenant.findFirst({
+      where: { status: 'ACTIVE' },
+      orderBy: { id: 'asc' },
+    });
+  }
 }
 
 module.exports = { TenantRepository };

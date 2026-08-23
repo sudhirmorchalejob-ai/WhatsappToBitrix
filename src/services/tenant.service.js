@@ -67,11 +67,11 @@ class TenantService {
       throw new AppError('Tenant not found', 404, null, 'TENANT_NOT_FOUND');
     }
 
-    const finalWebhookUrl = updateData.whatsappWebhookUrl !== undefined ? updateData.whatsappWebhookUrl : (tenant.whatsappWebhookUrl || env.WHATSAPP_WEBHOOK_URL);
+    const finalWebhookUrl = updateData.whatsappWebhookUrl !== undefined ? updateData.whatsappWebhookUrl : (tenant.whatsappWebhookUrl || env.WHATSAPP_WEBHOOK_URL || env.WHATSBOX_API_URL);
     const finalB24Url = updateData.bitrix24WebhookUrl !== undefined ? updateData.bitrix24WebhookUrl : (tenant.bitrix24WebhookUrl || env.BITRIX24_WEBHOOK_URL);
 
     // Test Bitrix24 Connection if URL provided
-    let b24TestResult = { ok: true };
+    let b24TestResult = { configured: Boolean(finalB24Url), ok: false };
     if (finalB24Url) {
       try {
         const b24Service = new Bitrix24Service();
@@ -79,11 +79,27 @@ class TenantService {
         b24TestResult = await b24Service.testConnection();
       } catch (err) {
         logWarn('Bitrix24 test connection failed during setup:', err.message);
-        b24TestResult = { ok: false, error: err.message };
+        b24TestResult = { configured: true, ok: false, error: err.message };
       }
+    } else {
+      b24TestResult = { configured: false, ok: false, error: 'Bitrix24 Webhook URL is not configured' };
     }
 
-    const isConfigured = Boolean(finalB24Url || finalWebhookUrl);
+    // Test WhatsApp Connection if URL provided
+    let whatsboxTestResult = { configured: Boolean(finalWebhookUrl), ok: false };
+    if (finalWebhookUrl) {
+      try {
+        const whatsboxService = new WhatsBoxService({ baseURL: finalWebhookUrl });
+        whatsboxTestResult = await whatsboxService.testConnection(finalWebhookUrl);
+      } catch (err) {
+        logWarn('WhatsApp test connection failed during setup:', err.message);
+        whatsboxTestResult = { configured: true, ok: false, error: err.message };
+      }
+    } else {
+      whatsboxTestResult = { configured: false, ok: false, error: 'WhatsApp Webhook URL is not configured' };
+    }
+
+    const isConfigured = Boolean((finalB24Url && b24TestResult.ok) || (finalWebhookUrl && whatsboxTestResult.ok));
     updateData.isConfigured = isConfigured;
 
     const updated = await this.tenantRepo.update(tenantId, updateData);
@@ -98,13 +114,14 @@ class TenantService {
         hasBitrix: Boolean(finalB24Url),
         isConfigured,
         b24TestOk: b24TestResult.ok,
+        whatsboxTestOk: whatsboxTestResult.ok,
       },
       ipAddress,
     });
 
     // Trigger instant contact sync so the dashboard is populated right after
     // the integration is saved (pull Bitrix24 contacts into the local DB).
-    if (finalB24Url) {
+    if (finalB24Url && b24TestResult.ok) {
       try {
         const { SyncService } = require('./sync.service');
         const syncService = new SyncService();
@@ -138,24 +155,25 @@ class TenantService {
       },
       connectionStatus: {
         bitrix24: b24TestResult,
+        whatsbox: whatsboxTestResult,
       },
     };
   }
 
   async testConnection(tenantId) {
-    let apiKey = env.WHATSBOX_API_KEY;
+    let waUrl = env.WHATSAPP_WEBHOOK_URL || env.WHATSBOX_API_URL;
     let b24Url = env.BITRIX24_WEBHOOK_URL;
 
     if (tenantId) {
       const tenant = await this.tenantRepo.findById(tenantId);
       if (tenant) {
-        if (tenant.whatsappWebhookUrl) apiKey = tenant.whatsappWebhookUrl;
+        if (tenant.whatsappWebhookUrl) waUrl = tenant.whatsappWebhookUrl;
         if (tenant.bitrix24WebhookUrl) b24Url = tenant.bitrix24WebhookUrl;
       }
     }
 
     const result = {
-      whatsbox: { configured: Boolean(apiKey), ok: false },
+      whatsbox: { configured: Boolean(waUrl), ok: false },
       bitrix24: { configured: Boolean(b24Url), ok: false },
     };
 
@@ -170,20 +188,25 @@ class TenantService {
         result.bitrix24.ok = false;
         result.bitrix24.error = err.message;
       }
+    } else {
+      result.bitrix24.error = 'Bitrix24 Webhook URL is not configured';
     }
 
-    if (apiKey) {
+    if (waUrl) {
       try {
-        const whatsboxService = new WhatsBoxService({ apiKey });
-        const res = await whatsboxService.testConnection();
+        const whatsboxService = new WhatsBoxService({ baseURL: waUrl });
+        const res = await whatsboxService.testConnection(waUrl);
         result.whatsbox.ok = res.ok;
+        result.whatsbox.status = res.status;
+        if (!res.ok && res.error) {
+          result.whatsbox.error = res.error;
+        }
       } catch (err) {
         result.whatsbox.ok = false;
         result.whatsbox.error = err.message;
       }
     } else {
-      result.whatsbox.ok = true;
-      result.whatsbox.note = 'Default development mode';
+      result.whatsbox.error = 'WhatsApp Webhook URL is not configured';
     }
 
     return result;

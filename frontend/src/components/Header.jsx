@@ -32,7 +32,7 @@ export default function Header({
           </div>
           <div className={`status-pill ${waOk ? 'status-online' : 'status-offline'}`}>
             <span className="status-dot"></span>
-            <span>WhatsApp {waOk ? 'Ready' : 'Unconfigured'}</span>
+            <span>WhatsApp {waOk ? 'Connected' : 'Disconnected'}</span>
           </div>
         </div>
 

@@ -41,23 +41,33 @@ const sendMediaSchema = baseSendSchema.extend({
 // ------------------------------------------------------------------
 
 class WhatsBoxService {
-  constructor() {
+  constructor(options = {}) {
+    this.options = typeof options === 'string' ? { baseURL: options } : (options || {});
     this.client = null;
   }
 
-  _ensureConfigured() {
-    if (!env.WHATSBOX_API_URL) {
+  _ensureConfigured(customUrl = null) {
+    const baseURL =
+      customUrl ||
+      this.options.baseURL ||
+      this.options.apiUrl ||
+      env.WHATSBOX_API_URL ||
+      env.WHATSAPP_WEBHOOK_URL;
+    const apiKey =
+      this.options.apiKey !== undefined ? this.options.apiKey : env.WHATSBOX_API_KEY;
+
+    if (!baseURL) {
       throw new AppError(
-        'WHATSBOX_API_URL is not configured',
+        'WhatsApp Gateway URL is not configured',
         503,
         null,
         'WHATSBOX_NOT_CONFIGURED'
       );
     }
-    if (!this.client) {
+    if (!this.client || customUrl || this.options.baseURL) {
       this.client = new WhatsBoxClient({
-        baseURL: env.WHATSBOX_API_URL,
-        apiKey: env.WHATSBOX_API_KEY || undefined,
+        baseURL,
+        apiKey: apiKey || undefined,
       });
     }
     return this.client;
@@ -147,42 +157,82 @@ class WhatsBoxService {
     return this._ensureConfigured().download(url, options);
   }
 
-  // ---------------- Connectivity ----------------
-
   /**
-   * Reachability probe. The WhatsBox API has no documented auth probe
-   * endpoint, so a 2xx/4xx response proves network reachability and the
-   * API key is fully validated on the first real send.
+   * Reachability probe. Directly checks gateway connectivity without URL mangling.
    */
-  async testConnection() {
-    const client = this._ensureConfigured();
+  async testConnection(customUrl = null) {
+    const baseURL =
+      customUrl ||
+      this.options.baseURL ||
+      this.options.apiUrl ||
+      env.WHATSBOX_API_URL ||
+      env.WHATSAPP_WEBHOOK_URL;
 
-    try {
-      const res = await client.http.get('/', { timeout: 10000 });
+    if (!baseURL) {
       return {
-        ok: true,
-        reachable: true,
-        httpStatus: res.status,
-        authVerified: false,
-        note: 'Network OK. API key is validated on the first send.',
+        ok: false,
+        configured: false,
+        error: 'WhatsApp Gateway URL is not configured',
+      };
+    }
+
+    const axios = require('axios');
+    try {
+      const res = await axios.get(baseURL, {
+        timeout: 10000,
+        validateStatus: () => true,
+      });
+
+      if (res.status >= 200 && res.status < 500) {
+        if (res.status === 401 || res.status === 403) {
+          return {
+            ok: false,
+            configured: true,
+            status: res.status,
+            error: 'Authentication failed (401/403 Unauthorized)',
+          };
+        }
+        return {
+          ok: true,
+          configured: true,
+          status: res.status,
+          message: 'Connected and reachable',
+        };
+      }
+
+      return {
+        ok: false,
+        configured: true,
+        status: res.status,
+        error: `Server responded with status HTTP ${res.status}`,
       };
     } catch (err) {
-      const normalized = err instanceof AppError ? err : err;
-      const status = normalized.statusCode || normalized.response?.status;
+      try {
+        const postRes = await axios.post(
+          baseURL,
+          { probe: true, timestamp: Date.now() },
+          {
+            timeout: 10000,
+            validateStatus: () => true,
+          }
+        );
+        if (postRes.status >= 200 && postRes.status < 500) {
+          return {
+            ok: true,
+            configured: true,
+            status: postRes.status,
+            message: 'Connected and reachable',
+          };
+        }
+      } catch {
+        // Fallback error ignored
+      }
 
-      if (status === 401 || status === 403) {
-        return { ok: false, reachable: true, httpStatus: status, authVerified: false, error: 'Invalid API key' };
-      }
-      if (normalized.code === 'NETWORK_ERROR' || !status) {
-        return { ok: false, reachable: false, error: normalized.message };
-      }
-      // 404 / 405 etc. still prove the host is reachable.
+      log.warn('WhatsApp gateway test probe failed', { url: baseURL, error: err.message });
       return {
-        ok: true,
-        reachable: true,
-        httpStatus: status,
-        authVerified: false,
-        note: 'Network OK. API key is validated on the first send.',
+        ok: false,
+        configured: true,
+        error: err.code === 'ECONNREFUSED' ? 'Connection refused by gateway' : err.message,
       };
     }
   }

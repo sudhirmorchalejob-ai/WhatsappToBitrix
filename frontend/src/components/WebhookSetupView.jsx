@@ -53,12 +53,13 @@ export default function WebhookSetupView({ token, onSetupUpdated, onSync, isSync
       const data = await res.json();
       if (!res.ok) throw new Error(data.message || 'Save failed');
 
-      const b24Ok = data.data?.connectionStatus?.bitrix24?.ok;
-      const waOk = data.data?.connectionStatus?.whatsbox?.ok;
+      const b24Ok = Boolean(data.data?.connectionStatus?.bitrix24?.ok);
+      const waOk = Boolean(data.data?.connectionStatus?.whatsbox?.ok);
+      const allOk = b24Ok && waOk;
 
       setStatusMsg({
-        type: b24Ok ? 'success' : 'error',
-        text: `Webhooks Saved! Bitrix24 CRM: ${b24Ok ? '✅ Connected' : '⚠️ Unreachable'} | WhatsApp: ${waOk ? '✅ Ready' : '⚠️ Unconfigured'}`,
+        type: allOk ? 'success' : (b24Ok || waOk ? 'info' : 'error'),
+        text: `Webhooks Saved! Bitrix24 CRM: ${b24Ok ? '✅ Connected' : '⚠️ Disconnected'} | WhatsApp: ${waOk ? '✅ Connected' : '⚠️ Disconnected'}`,
       });
 
       if (onSetupUpdated) onSetupUpdated();
@@ -85,9 +86,13 @@ export default function WebhookSetupView({ token, onSetupUpdated, onSync, isSync
       const wa = data.data?.whatsbox;
       setConnResult({ b24, wa });
 
+      const allOk = Boolean(b24?.ok && wa?.ok);
+      const b24Text = b24?.ok ? 'Connected' : (b24?.error || 'Disconnected');
+      const waText = wa?.ok ? 'Connected' : (wa?.error || 'Disconnected');
+
       setStatusMsg({
-        type: b24?.ok && wa?.ok ? 'success' : 'error',
-        text: `Connection Test Result: Bitrix24 CRM (${b24?.ok ? 'OK' : 'Failed'}), WhatsApp (${wa?.ok ? 'Ready' : 'Pending'})`,
+        type: allOk ? 'success' : 'error',
+        text: `Connection Test Result: Bitrix24 CRM (${b24Text}), WhatsApp (${waText})`,
       });
     } catch (err) {
       setStatusMsg({ type: 'error', text: err.message });
