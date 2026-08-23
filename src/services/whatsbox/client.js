@@ -76,10 +76,11 @@ class WhatsBoxClient {
         const res = await this.http.post(path, payload);
         const data = res && res.data;
 
-        if (data && data.success === false) {
+        if (data && (data.success === false || data.accepted === false)) {
+          const errMsg = data.message || (typeof data.data === 'string' ? data.data : null) || data.error || 'WhatsApp gateway rejected request';
           throw new WhatsBoxApiError(
-            data.message || data.error || 'WhatsBox request failed',
-            data.error || 'REQUEST_FAILED',
+            errMsg,
+            data.error || 'GATEWAY_REJECTED',
             res.status,
             data
           );

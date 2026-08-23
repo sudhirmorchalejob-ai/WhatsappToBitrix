@@ -6,7 +6,10 @@ const { WhatsBoxService } = require('./whatsbox');
 const { hashPassword } = require('../utils/password');
 const { normalizePhone } = require('../helpers/phone');
 const AppError = require('../utils/AppError');
+const logger = require('../utils/logger');
 const { env } = require('../config');
+
+const log = logger.childFor('tenant-service');
 
 class TenantService {
   constructor({
@@ -51,6 +54,14 @@ class TenantService {
       throw new AppError('Tenant context required for setup', 400, null, 'TENANT_REQUIRED');
     }
 
+    log.info(`[Webhook Setup Save Request] Tenant #${tenantId}`, {
+      whatsappWebhookUrl,
+      whatsboxChannelId,
+      bitrix24WebhookUrl,
+      userId,
+      ipAddress,
+    });
+
     const updateData = {};
     if (whatsappWebhookUrl !== undefined && whatsappWebhookUrl !== null && String(whatsappWebhookUrl).trim() !== '') {
       updateData.whatsappWebhookUrl = String(whatsappWebhookUrl).trim();
@@ -74,11 +85,13 @@ class TenantService {
     let b24TestResult = { configured: Boolean(finalB24Url), ok: false };
     if (finalB24Url) {
       try {
+        log.info(`[Webhook Setup Testing Bitrix24] Probing URL: ${finalB24Url}`);
         const b24Service = new Bitrix24Service();
         b24Service.client = new (require('./bitrix24/client').Bitrix24Client)(finalB24Url);
         b24TestResult = await b24Service.testConnection();
+        log.info(`[Webhook Setup Bitrix24 Test OK] Result: ${JSON.stringify(b24TestResult)}`);
       } catch (err) {
-        logWarn('Bitrix24 test connection failed during setup:', err.message);
+        log.warn(`[Webhook Setup Bitrix24 Test FAILED]: ${err.message}`);
         b24TestResult = { configured: true, ok: false, error: err.message };
       }
     } else {
@@ -89,10 +102,12 @@ class TenantService {
     let whatsboxTestResult = { configured: Boolean(finalWebhookUrl), ok: false };
     if (finalWebhookUrl) {
       try {
+        log.info(`[Webhook Setup Testing WhatsApp] Probing URL: ${finalWebhookUrl}`);
         const whatsboxService = new WhatsBoxService({ baseURL: finalWebhookUrl });
         whatsboxTestResult = await whatsboxService.testConnection(finalWebhookUrl);
+        log.info(`[Webhook Setup WhatsApp Test OK] Result: ${JSON.stringify(whatsboxTestResult)}`);
       } catch (err) {
-        logWarn('WhatsApp test connection failed during setup:', err.message);
+        log.warn(`[Webhook Setup WhatsApp Test FAILED]: ${err.message}`);
         whatsboxTestResult = { configured: true, ok: false, error: err.message };
       }
     } else {
@@ -103,6 +118,12 @@ class TenantService {
     updateData.isConfigured = isConfigured;
 
     const updated = await this.tenantRepo.update(tenantId, updateData);
+    log.info(`[Webhook Setup DB Updated Successfully] Tenant #${tenantId}`, {
+      whatsappWebhookUrl: updated.whatsappWebhookUrl,
+      whatsboxChannelId: updated.whatsboxChannelId,
+      bitrix24WebhookUrl: updated.bitrix24WebhookUrl,
+      isConfigured: updated.isConfigured,
+    });
 
     await this.activityLogRepo.log({
       tenantId,
@@ -123,11 +144,12 @@ class TenantService {
     // the integration is saved (pull Bitrix24 contacts into the local DB).
     if (finalB24Url && b24TestResult.ok) {
       try {
+        log.info(`[Webhook Setup Triggering Bitrix24 Contact Sync] Tenant #${tenantId}`);
         const { SyncService } = require('./sync.service');
         const syncService = new SyncService();
         syncService
           .syncContactsFromBitrix24(tenantId, { userId, ipAddress })
-          .catch((err) => logWarn('Background contact pull-sync error:', err.message));
+          .catch((err) => log.warn(`[Background contact pull-sync error]: ${err.message}`));
       } catch (e) {
         // silent catch
       }
@@ -139,11 +161,13 @@ class TenantService {
       try {
         const { ResyncContactsJob } = require('../jobs/resyncContacts.job');
         const job = new ResyncContactsJob();
-        job.run().catch((err) => logWarn('Background resync trigger error:', err.message));
+        job.run().catch((err) => log.warn(`[Background resync trigger error]: ${err.message}`));
       } catch (e) {
         // silent catch
       }
     }
+
+    log.info(`[Webhook Setup Save Complete] Bitrix24: ${b24TestResult.ok ? 'Connected' : 'Failed'}, WhatsApp: ${whatsboxTestResult.ok ? 'Connected' : 'Failed'}`);
 
     return {
       success: true,
