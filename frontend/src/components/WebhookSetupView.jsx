@@ -175,7 +175,7 @@ export default function WebhookSetupView({ token, onSetupUpdated, onSync, isSync
             <input
               type="text"
               className="form-control"
-              placeholder="e.g. 919041800275"
+              placeholder="e.g. 919917900061"
               value={waChannelId}
               onChange={(e) => setWaChannelId(e.target.value)}
             />
