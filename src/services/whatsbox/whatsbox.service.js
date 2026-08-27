@@ -153,6 +153,26 @@ class WhatsBoxService {
     return this._extractResult(data);
   }
 
+  async sendTemplate(input) {
+    const { to, template, channelId, userId, name } = input;
+
+    if (!template || !template.name) {
+      throw new AppError('Template name is required', 400, null, 'TEMPLATE_NAME_REQUIRED');
+    }
+
+    const payload = {
+      medium: MEDIUM,
+      channel_id: channelId || this._defaultChannelId(),
+      to,
+      name,
+      user_id: userId,
+      template,
+    };
+
+    const data = await this._ensureConfigured().post('messages/template', payload);
+    return this._extractResult(data);
+  }
+
   async downloadMedia(url, options) {
     return this._ensureConfigured().download(url, options);
   }

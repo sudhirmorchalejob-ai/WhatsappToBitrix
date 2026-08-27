@@ -71,6 +71,7 @@ enum CampaignStatus {
 enum CampaignType {
   TEXT
   MEDIA
+  TEMPLATE
 }
 
 enum UserRole {
@@ -115,6 +116,7 @@ model Tenant {
   activityLogs          ActivityLog[]
   campaigns             Campaign[]
   connectorLineMappings ConnectorLineMapping[]
+  whatsappTemplates     WhatsAppTemplate[]
 
   @@map("tenants")
 }
@@ -291,6 +293,11 @@ model Campaign {
   mediaName       String?        @db.VarChar(255)
   caption         String?        @db.VarChar(1000)
   createdVia      String         @default("WHATSAPP") @db.VarChar(20)
+
+  // WhatsApp Business template fields (when type = TEMPLATE).
+  templateName    String?        @db.VarChar(255)
+  templateLanguage String?       @db.VarChar(10)
+  templateParams  Json?
 
   // Bitrix24 lead id created for this campaign (two-way campaign sync).
   bitrix24LeadId  Int?
@@ -544,4 +551,29 @@ model ConnectorLineMapping {
 
   @@index([memberId])
   @@map("connector_line_mappings")
+}
+
+model WhatsAppTemplate {
+  id                Int      @id @default(autoincrement())
+  tenantId          Int?
+  templateName      String   @db.VarChar(255)
+  category          String   @db.VarChar(50)   // MARKETING, UTILITY, AUTHENTICATION
+  language          String   @db.VarChar(10)
+  status            String   @default("ACTIVE") @db.VarChar(20)
+  bodyText          String?  @db.Text
+  headerType        String?  @db.VarChar(20)
+  headerText        String?  @db.Text
+  buttons           Json?
+  components        Json?
+  raw               Json?
+  fetchedAt         DateTime @default(now())
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  tenant            Tenant?  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, templateName, language])
+  @@index([tenantId])
+  @@index([category])
+  @@map("whatsapp_templates")
 }

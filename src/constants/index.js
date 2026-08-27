@@ -53,6 +53,7 @@ const CAMPAIGN_STATUS = Object.freeze({
 const CAMPAIGN_TYPE = Object.freeze({
   TEXT: 'TEXT',
   MEDIA: 'MEDIA',
+  TEMPLATE: 'TEMPLATE',
 });
 
 const PROVIDER = Object.freeze({

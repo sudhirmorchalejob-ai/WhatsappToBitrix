@@ -14,6 +14,7 @@ const { UserRepository } = require('./user.repository');
 const { ActivityLogRepository } = require('./activityLog.repository');
 const { ConnectorLineMappingRepository } = require('./connectorLineMapping.repository');
 const { CampaignRepository } = require('./campaign.repository');
+const { WhatsAppTemplateRepository } = require('./whatsappTemplate.repository');
 
 module.exports = {
   ContactRepository,
@@ -32,4 +33,5 @@ module.exports = {
   ActivityLogRepository,
   ConnectorLineMappingRepository,
   CampaignRepository,
+  WhatsAppTemplateRepository,
 };

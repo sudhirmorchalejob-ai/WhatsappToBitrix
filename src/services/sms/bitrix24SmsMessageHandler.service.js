@@ -16,6 +16,7 @@ const {
 const { ConversationService } = require('../conversation.service');
 const { SmsService } = require('./sms.service');
 const { Bitrix24MessageProviderService } = require('../bitrix24/messageProvider.service');
+const { WhatsAppTemplateService } = require('../whatsappTemplate.service');
 const { bitrix24SmsSchema } = require('../../webhooks/bitrix24Sms/schemas');
 
 const log = logger.childFor('bitrix24-sms-handler');
@@ -43,6 +44,7 @@ class Bitrix24SmsMessageHandler {
     conversationService = new ConversationService(),
     smsService = new SmsService(),
     messageProvider = new Bitrix24MessageProviderService(),
+    whatsappTemplateService = new WhatsAppTemplateService(),
   } = {}) {
     this.installRepo = installRepo;
     this.messageRepo = messageRepo;
@@ -51,6 +53,7 @@ class Bitrix24SmsMessageHandler {
     this.conversationService = conversationService;
     this.smsService = smsService;
     this.messageProvider = messageProvider;
+    this.whatsappTemplateService = whatsappTemplateService;
   }
 
   /** Payload → resolved install (null when the code is unknown). */
@@ -72,6 +75,18 @@ class Bitrix24SmsMessageHandler {
       throw new AppError(`Unknown message provider code: ${data.code}`, 400, null, 'UNKNOWN_PROVIDER_CODE');
     }
     const tenantId = install.tenantId || null;
+
+    // Default template fallback: when message_body is empty, try to resolve
+    // a default WhatsApp template for the tenant. This lets Bitrix24 trigger
+    // pre-approved template sends via the SMS provider handler.
+    let messageBody = data.message_body;
+    if (!messageBody && tenantId) {
+      const defaultTemplate = await this._resolveDefaultTemplate(tenantId);
+      if (defaultTemplate) {
+        messageBody = `[Template: ${defaultTemplate.templateName}]`;
+        log.info(`[Bitrix24 SMS Handler] Using default template "${defaultTemplate.templateName}" for tenant ${tenantId}`);
+      }
+    }
 
     await this.webhookLogRepo.create({
       source: WEBHOOK_SOURCE.SMS,
@@ -105,7 +120,7 @@ class Bitrix24SmsMessageHandler {
       contact,
       direction: MESSAGE_DIRECTION.OUTGOING,
       type: MESSAGE_TYPE.TEXT,
-      body: data.message_body,
+      body: messageBody,
       provider: PROVIDER.SMS,
       bitrixMessageId: data.message_id,
       payload: data,
@@ -118,7 +133,7 @@ class Bitrix24SmsMessageHandler {
     try {
       sendResult = await this.smsService.sendText(tenantId, {
         to: data.message_to,
-        body: data.message_body,
+        body: messageBody,
       });
     } catch (err) {
       const error = err && err.message ? err.message : String(err);
@@ -163,6 +178,23 @@ class Bitrix24SmsMessageHandler {
   async _reportToBitrix24(install, messageId, status) {
     if (!install || !messageId) return;
     await this.messageProvider.updateMessageStatus(install.memberId, { messageId, status });
+  }
+
+  /**
+   * Resolves a default WhatsApp template for the tenant. Looks for the
+   * first ACTIVE MARKETING template, then UTILITY, then any. Returns null
+   * when no templates are cached for the tenant.
+   */
+  async _resolveDefaultTemplate(tenantId) {
+    try {
+      const { items } = await this.whatsappTemplateService.list(tenantId, { status: 'ACTIVE', limit: 100 });
+      if (!items.length) return null;
+      // Prefer MARKETING > UTILITY > AUTHENTICATION > any
+      const byCategory = (cat) => items.find((t) => t.category === cat);
+      return byCategory('MARKETING') || byCategory('UTILITY') || byCategory('AUTHENTICATION') || items[0];
+    } catch {
+      return null;
+    }
   }
 
   _toDate(value) {

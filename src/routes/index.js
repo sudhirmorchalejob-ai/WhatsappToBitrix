@@ -18,6 +18,7 @@ const autoReplyRoute = require('./autoReply.route');
 const connectorRoute = require('./connector.route');
 const bitrix24SmsRoute = require('./bitrix24Sms.route');
 const smsRoute = require('./sms.route');
+const whatsappTemplateRoute = require('./whatsappTemplate.routes');
 
 const router = Router();
 
@@ -50,6 +51,7 @@ router.use('/admin', adminRoute);
 router.use('/agents', agentRoute);
 router.use('/templates', templateRoute);
 router.use('/campaigns', campaignRoute);
+router.use('/whatsapp-templates', whatsappTemplateRoute);
 router.use('/auto-replies', autoReplyRoute);
 router.use('/sms', smsRoute);
 

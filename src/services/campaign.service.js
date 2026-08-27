@@ -8,6 +8,7 @@ const { WhatsBoxService } = require('./whatsbox');
 const { OutgoingMessageService } = require('./outgoingMessage.service');
 const { SegmentResolverService } = require('./segmentResolver.service');
 const { Bitrix24Service } = require('./bitrix24');
+const { WhatsAppTemplateService } = require('./whatsappTemplate.service');
 
 const log = logger.childFor('campaign-service');
 
@@ -64,6 +65,7 @@ class CampaignService {
     segmentResolver = new SegmentResolverService(),
     bitrix24 = new Bitrix24Service(),
     outgoingMessageService = null,
+    whatsappTemplateService = new WhatsAppTemplateService(),
   } = {}) {
     this.repo = repo;
     this.whatsbox = whatsbox;
@@ -71,6 +73,7 @@ class CampaignService {
     this.bitrix24 = bitrix24;
     this.outgoingMessageService =
       outgoingMessageService || new OutgoingMessageService({ whatsbox });
+    this.whatsappTemplateService = whatsappTemplateService;
   }
 
   _normalizePhones(list = []) {
@@ -109,6 +112,9 @@ class CampaignService {
       segmentKey: segment ? segment.key : null,
       segmentName: segment ? segment.name : null,
       totalRecipients: phones.length,
+      templateName: data.type === 'TEMPLATE' ? data.templateName : null,
+      templateLanguage: data.type === 'TEMPLATE' ? (data.templateLanguage || 'en') : null,
+      templateParams: data.type === 'TEMPLATE' && data.templateParams ? data.templateParams : null,
     });
 
     if (phones.length) await this.repo.addRecipients(campaign.id, phones);
@@ -225,6 +231,25 @@ class CampaignService {
     if (campaign.type === 'MEDIA' && !campaign.mediaUrl) {
       throw new AppError('Media campaign has no media URL', 400, null, 'CAMPAIGN_NO_MEDIA');
     }
+    if (campaign.type === 'TEMPLATE' && !campaign.templateName) {
+      throw new AppError('Template campaign has no template name', 400, null, 'CAMPAIGN_NO_TEMPLATE');
+    }
+
+    // Pre-fetch the WhatsApp template for TEMPLATE campaigns.
+    let templateRow = null;
+    if (campaign.type === 'TEMPLATE') {
+      templateRow = await this.whatsappTemplateService.getByName(
+        campaign.templateName,
+        campaign.templateLanguage || 'en',
+        tenantId
+      );
+      if (!templateRow) {
+        throw new AppError(
+          `WhatsApp template "${campaign.templateName}" (${campaign.templateLanguage || 'en'}) not found in local cache. Sync templates first.`,
+          400, null, 'WHATSAPP_TEMPLATE_NOT_FOUND'
+        );
+      }
+    }
 
     // A segment chosen at launch time is bound to the campaign now.
     let segmentKey = campaign.segmentKey;
@@ -294,17 +319,25 @@ class CampaignService {
         to: recipient.phone,
         name: nameByPhone.get(recipient.phone) || undefined,
       };
+      let message;
       try {
-        const message =
-          campaign.type === 'MEDIA'
-            ? await this.outgoingMessageService.sendMedia({
-                ...input,
-                type: this._mediaType(campaign),
-                link: campaign.mediaUrl,
-                caption: campaign.caption || undefined,
-                filename: campaign.mediaName || undefined,
-              })
-            : await this.outgoingMessageService.sendText({ ...input, body: campaign.body });
+        if (campaign.type === 'TEMPLATE') {
+          message = await this.outgoingMessageService.sendTemplate({
+            ...input,
+            template: templateRow,
+            templateParams: campaign.templateParams || [],
+          });
+        } else if (campaign.type === 'MEDIA') {
+          message = await this.outgoingMessageService.sendMedia({
+            ...input,
+            type: this._mediaType(campaign),
+            link: campaign.mediaUrl,
+            caption: campaign.caption || undefined,
+            filename: campaign.mediaName || undefined,
+          });
+        } else {
+          message = await this.outgoingMessageService.sendText({ ...input, body: campaign.body });
+        }
 
         await this.repo.updateRecipientStatus(recipient.id, {
           status: RECIPIENT_STATUS.SENT,

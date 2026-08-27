@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Smartphone, Save, Loader2, CheckCircle2, AlertCircle, Send, ExternalLink } from 'lucide-react';
+import { Smartphone, Save, Loader2, CheckCircle2, AlertCircle, Send, ExternalLink, FileText } from 'lucide-react';
 
 export default function SmsConfigView({ token }) {
   const [config, setConfig] = useState({
@@ -21,11 +21,13 @@ export default function SmsConfigView({ token }) {
   const [connResult, setConnResult] = useState(null);
   const [testPhone, setTestPhone] = useState('');
   const [maskedKeys, setMaskedKeys] = useState({});
+  const [templates, setTemplates] = useState([]);
 
   const authHeaders = { Authorization: `Bearer ${token}` };
 
   useEffect(() => {
     fetchConfig();
+    fetchTemplates();
   }, []);
 
   const fetchConfig = async () => {
@@ -46,6 +48,19 @@ export default function SmsConfigView({ token }) {
       console.error('Failed to load SMS config:', err);
     } finally {
       setLoaded(true);
+    }
+  };
+
+  const fetchTemplates = async () => {
+    try {
+      const res = await fetch('/api/whatsapp-templates?limit=100', { headers: authHeaders });
+      const data = await res.json();
+      if (res.ok) {
+        const items = Array.isArray(data.data) ? data.data : (data.data?.items || []);
+        setTemplates(items);
+      }
+    } catch {
+      // Templates not critical for SMS config page
     }
   };
 
@@ -269,6 +284,29 @@ export default function SmsConfigView({ token }) {
               />
             </div>
           </div>
+
+          {templates.length > 0 && (
+            <div className="form-group">
+              <label className="form-label" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <FileText size={14} /> Default WhatsApp Template (SMS fallback)
+              </label>
+              <select
+                className="form-control"
+                value={config.sms_default_template || ''}
+                onChange={(e) => setField('sms_default_template', e.target.value)}
+              >
+                <option value="">None — use message body as-is</option>
+                {templates.map((tpl) => (
+                  <option key={tpl.id} value={tpl.templateName}>
+                    {tpl.templateName} ({tpl.category}, {tpl.language})
+                  </option>
+                ))}
+              </select>
+              <p style={{ fontSize: 12, color: 'var(--text-dim)', marginTop: 6 }}>
+                When Bitrix24 sends an SMS with no body, this template is used as the default message.
+              </p>
+            </div>
+          )}
 
           <p style={{ fontSize: 12, color: 'var(--text-dim)', marginTop: 6 }}>
             Point your gateway's delivery callback at{' '}

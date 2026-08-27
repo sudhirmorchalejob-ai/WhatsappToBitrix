@@ -145,6 +145,66 @@ class OutgoingMessageService {
     return this.messageRepo.findById(message.id);
   }
 
+  async sendTemplate(input) {
+    log.info(`[Outgoing Message] Sending template to ${input.to}`, {
+      templateName: input.template ? input.template.templateName : 'unknown',
+      campaignId: input.campaignId,
+      tenantId: input.tenantId,
+    });
+
+    const { conversation, messageContact } = await this._resolveContext(input);
+    const leadContext = this._leadContext(input, messageContact);
+    const leadId = await this._resolveLeadId({ input, conversation, messageContact, firstBody: null, leadContext });
+
+    const templateLabel = input.template
+      ? `[Template: ${input.template.templateName}/${input.template.language}]`
+      : '[Template]';
+
+    const message = await this.service.saveMessage({
+      conversation,
+      contact: messageContact,
+      leadId,
+      direction: MESSAGE_DIRECTION.OUTGOING,
+      type: MESSAGE_TYPE.TEXT,
+      body: templateLabel,
+      status: MESSAGE_STATUS.PENDING,
+      campaignId: input.campaignId,
+    });
+    log.info(`[Outgoing Message Saved] DB Template Message #${message.id} (Status: PENDING, Lead #${leadId || 'none'})`);
+
+    try {
+      const payload = {
+        to: messageContact.whatsappPhone,
+        channelId: input.channelId,
+        userId: input.userId,
+        name: input.name,
+        template: {
+          name: input.template.templateName,
+          language: { code: input.template.language },
+        },
+      };
+
+      if (input.templateParams && input.templateParams.length) {
+        payload.template.components = [
+          {
+            type: 'body',
+            parameters: input.templateParams.map((p) => ({ type: 'text', text: String(p) })),
+          },
+        ];
+      }
+
+      const result = await this.whatsbox.sendTemplate(payload);
+      await this._markSent(message.id, result);
+      log.info(`[Outgoing Template Message Sent OK] DB Message #${message.id} -> Gateway WAMID: ${result.whatsboxMessageId || result.wamid || 'ack'}`);
+    } catch (err) {
+      log.error(`[Outgoing Template Message Send FAILED] DB Message #${message.id}`, { error: err.message });
+      await this._markFailed(message.id, err);
+      throw err;
+    }
+
+    return this.messageRepo.findById(message.id);
+  }
+
   // ------------------------------------------------------------------
   // Shared resolution steps
   // ------------------------------------------------------------------

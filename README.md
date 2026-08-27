@@ -27,6 +27,7 @@ It turns every incoming WhatsApp message into a deduplicated **Contact + Company
 | 15 | **React SPA Dashboard** | Vite + React 19 dark-glassmorphism dashboard: KPI stats, leads, live chat, webhook setup, auto-replies, campaigns, activity/message logs. |
 | 16 | **Security** | JWT auth + roles, API keys, tenant context isolation, webhook HMAC/signature verification, rate limiting, helmet/CORS, masked secret settings, password reset via MS Graph email. |
 | 17 | **SMS Gateway (Bitrix24 provider)** | Registers a “My SMS Gateway” message provider (`messageservice.sender.add`) so Bitrix24 CRM / Automation / Workflows can send SMS through your gateway; delivery reports flow back via `messageservice.message.status.update`. See `docs/BITRIX24_SMS_PROVIDER.md`. |
+| 18 | **WhatsApp Business API (Meta Graph API)** | Fetch message templates, send template messages, and manage WABA assets via the Meta Graph API through a BSP proxy (averlonworld). Supports pagination, Bearer token auth, and all template metadata (name, status, category, language, components, buttons). |
 
 ---
 
@@ -134,6 +135,40 @@ It turns every incoming WhatsApp message into a deduplicated **Contact + Company
 - Tenant context: from the JWT user or `x-tenant-id` / `x-tenant-slug` headers; tenant-scoped settings.
 - Security: webhook HMAC verification (`x-webhook-signature` / `x-whatsbox-signature` / `x-signature`, hex or base64, optional `x-webhook-secret`), Bitrix24 secret check, rate limiters (API + webhook), helmet (CSP/clickjacking tuned for Bitrix24 iframe), CORS, secret masking in settings.
 
+### WhatsApp Business API (Meta Graph API via BSP proxy)
+- Fetches WhatsApp message templates from the Meta Graph API through a **Business Solution Provider (BSP) proxy** (`crmapi.1automations.com/api/meta`).
+- **Authentication:** `Authorization: Bearer <ACCESS_TOKEN>` header (not query param — the BSP proxy requires header-based auth).
+- **Base URL:** Configurable via `WHATSAPP_API_BASE_URL` (default: `https://crmapi.1automations.com/api/meta`).
+- **Key identifiers:**
+  - `WHATSAPP_WABA_ID` — WhatsApp Business Account ID (numeric, e.g. `1636596038183013`)
+  - `WHATSAPP_PHONE_NUMBER_ID` — Registered phone number ID (numeric, e.g. `1227944940413124`)
+  - `WHATSAPP_ACCESS_TOKEN` — Bearer token from the BSP panel (Channels → 3 dots → Access Token)
+- **Pagination:** Templates API supports cursor-based paging via `paging.next`; the client auto-follows cursors until exhausted.
+- **Template object shape:**
+  ```
+  {
+    name: string,              // Template name (unique within WABA)
+    status: string,            // APPROVED | PENDING | REJECTED
+    category: string,          // UTILITY | AUTHENTICATION | MARKETING
+    language: string,          // Language code (e.g. "en", "az", "bn")
+    parameter_format: string,  // POSITIONAL | NAMED
+    components: [              // Array of template components
+      {
+        type: string,          // HEADER | BODY | FOOTER | BUTTONS
+        text: string,          // Component text (with {{var}} placeholders)
+        buttons: [             // Only for type=BUTTONS
+          {
+            type: string,      // QUICK_REPLY | URL | PHONE_NUMBER
+            text: string,      // Button label
+            url: string        // URL button link (optional)
+          }
+        ]
+      }
+    ]
+  }
+  ```
+- **Use cases:** Sync approved templates into the local `Template` model, display template list in the dashboard, validate template names before campaign sends, check approval status before scheduling.
+
 ---
 
 ## 🔌 API Reference
@@ -200,6 +235,40 @@ It turns every incoming WhatsApp message into a deduplicated **Contact + Company
 | `GET` | `/webhooks/whatsbox` | Hub challenge verification |
 | `POST` | `/webhooks/bitrix24` | Bitrix24 events (operator replies, lead mirror) |
 | `POST` | `/webhooks/sms` | SMS gateway delivery-report (DLR) callback (raw body, JSON or form-encoded) |
+
+### WhatsApp Business API (external — Meta Graph API via BSP proxy)
+| Method | Endpoint | Description |
+|---|---|---|
+| `GET` | `{WHATSAPP_API_BASE_URL}/v20.0/{WHATSAPP_WABA_ID}/message_templates` | Fetch all message templates (paginated, Bearer auth) |
+| `GET` | `{WHATSAPP_API_BASE_URL}/v20.0/{WHATSAPP_PHONE_NUMBER_ID}/messages` | Send a template message |
+| `GET` | `{WHATSAPP_API_BASE_URL}/v20.0/{WHATSAPP_PHONE_NUMBER_ID}` | Get phone number info (status, quality, limit) |
+
+**Request format:**
+```
+GET https://crmapi.1automations.com/api/meta/v20.0/{WABA_ID}/message_templates?limit=100
+Authorization: Bearer {ACCESS_TOKEN}
+```
+
+**Response envelope (paginated):**
+```json
+{
+  "data": [
+    {
+      "name": "template_name",
+      "status": "APPROVED",
+      "category": "UTILITY",
+      "language": "en",
+      "components": [...]
+    }
+  ],
+  "paging": {
+    "cursors": { "before": "...", "after": "..." },
+    "next": "https://crmapi.1automations.com/api/meta/v20.0/.../message_templates?after=..."
+  }
+}
+```
+
+**Pagination:** Follow `paging.next` URL until absent. Each page returns up to `limit` templates (max 100).
 
 ### Bitrix24 app endpoints
 | Method | Path | Description |
@@ -269,6 +338,10 @@ Delivery reports from the SMS gateway. Accepted payload shapes are gateway-agnos
 | `RETRY_ENABLED` / `RETRY_INTERVAL_MS` / `OUTGOING_MAX_RETRIES` | `true` / `300000` / `3` | Retry job |
 | `WHATSBOX_API_URL` / `WHATSBOX_API_KEY` / `WHATSBOX_CHANNEL_ID` / `WHATSBOX_WEBHOOK_SECRET` | — | WhatsBox provider |
 | `WHATSAPP_WEBHOOK_URL` | — | Public webhook URL (per-tenant default fallback) |
+| `WHATSAPP_ACCESS_TOKEN` | — | Bearer token for Meta Graph API (from BSP panel → Channels → Access Token) |
+| `WHATSAPP_WABA_ID` | — | WhatsApp Business Account ID (numeric, from BSP panel) |
+| `WHATSAPP_PHONE_NUMBER_ID` | — | Phone number ID (numeric, from BSP panel) |
+| `WHATSAPP_API_BASE_URL` | `https://graph.facebook.com` | Graph API base URL (use `https://crmapi.1automations.com/api/meta` for averlonworld BSP) |
 | `META_*` (Meta Cloud API) | removed | No longer used — all WhatsApp in/out goes through the WhatsBox webhook |
 | `BITRIX24_WEBHOOK_URL` / `BITRIX24_WEBHOOK_SECRET` | — | Inbound REST webhook + secret |
 | `BITRIX24_CLIENT_ID` / `BITRIX24_CLIENT_SECRET` / `BITRIX24_MEMBER_ID` | — | Marketplace app OAuth |
@@ -337,6 +410,7 @@ whatsappintegration/
 │   │   ├── whatsbox/          #   WhatsBox provider
 │   │   ├── sms/               #   SMS gateway: config.service, sms.service, smsDelivery.service,
 │   │   │                      #   bitrix24SmsMessageHandler.service, status, providers/{generic,msg91}
+│   │   ├── whatsappBusiness/  #   Meta Graph API client (templates, WABA management via BSP proxy)
 │   │   ├── conversation.service.js
 │   │   ├── customerResolver.service.js
 │   │   ├── outgoingMessage.service.js
@@ -418,7 +492,7 @@ npx prisma migrate deploy    # apply migrations
 npx prisma generate          # regenerate client (stop the server first on Windows)
 ```
 
-> See `docs/BITRIX24_SETUP.md` for Bitrix24 marketplace/app/connector setup, `docs/BITRIX24_SMS_PROVIDER.md` for the "My SMS Gateway" provider + required scopes, `docs/DEPLOYMENT.md` for deploying to Render, and `docs/ERD.md` for the schema.
+> See `docs/BITRIX24_SETUP.md` for Bitrix24 marketplace/app/connector setup, `docs/BITRIX24_SMS_PROVIDER.md` for the "My SMS Gateway" provider + required scopes, `docs/DEPLOYMENT.md` for deploying to Render, and `docs/ERD.md` for the schema. For the WhatsApp Business API (Meta Graph API) setup via the averlonworld BSP, see the [BSP documentation](https://helpdocumentation.gitbook.io/user/platform-overview).
 
 ---
 
